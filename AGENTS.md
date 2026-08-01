@@ -129,6 +129,10 @@ Ask (or confirm from an existing job) before creating:
 - In `internal/serve/index.html`: never name a function parameter `el` — it
   shadows the global `el()` element helper (this bit us once: the Routines
   modal showed "error loading" for any non-empty job list).
+- Chat markdown uses the vendored `markdown-it.min.js` (MIT, embedded at
+  `internal/serve/markdown-it.min.js`, served at `/assets/markdown-it.min.js`)
+  through the `mdRender()` wrapper — `html:false` + link-scheme allowlist;
+  never render raw HTML into messages without going through it.
 - Webhook secrets are returned once at creation and never in list responses.
 
 ## Notes

@@ -38,6 +38,9 @@ var indexHTML []byte
 //go:embed logo-wordmark.svg
 var logoWordmarkSVG []byte
 
+//go:embed markdown-it.min.js
+var markdownItJS []byte
+
 // Server wires a controller to its HTTP surface. The Broadcaster must be the
 // same sink the controller was constructed with, so events reach SSE clients.
 type Server struct {
@@ -382,6 +385,7 @@ func (s *Server) handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /", s.index)
 	mux.HandleFunc("GET /assets/logo-wordmark.svg", s.logoWordmark)
+	mux.HandleFunc("GET /assets/markdown-it.min.js", s.markdownItAsset)
 	mux.HandleFunc("GET /events", s.events)
 	mux.HandleFunc("GET /history", s.history)
 	mux.HandleFunc("GET /context", s.context)
@@ -514,6 +518,14 @@ func (s *Server) logoWordmark(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "image/svg+xml; charset=utf-8")
 	w.Header().Set("Cache-Control", "public, max-age=3600")
 	_, _ = w.Write(logoWordmarkSVG)
+}
+
+// markdownItAsset serves the vendored markdown-it UMD bundle used by the chat
+// renderer (loaded via <script src>). The file is embedded at build time.
+func (s *Server) markdownItAsset(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
+	w.Header().Set("Cache-Control", "public, max-age=3600")
+	_, _ = w.Write(markdownItJS)
 }
 
 // sseKeepaliveInterval is how often the /events handler emits a `: ping`
