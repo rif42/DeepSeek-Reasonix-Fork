@@ -134,6 +134,13 @@ Ask (or confirm from an existing job) before creating:
   through the `mdRender()` wrapper — `html:false` + link-scheme allowlist;
   never render raw HTML into messages without going through it.
 - Webhook secrets are returned once at creation and never in list responses.
+- Memory review (`internal/memoryreview` + `[memory]` config): the post-turn
+  nudge and the `reasonix memory review` CLI share the same reviewer. It runs
+  through the cache-warm headless boot path and never rebuilds a live session's
+  system prompt — the prefix-cache invariant is load-bearing, do not "help" by
+  injecting review output into the system prompt. `internal/headless` is the
+  leaf over `boot.Build`; boot's `reviewRunner` duplicates its shape to avoid a
+  `boot → routines → boot` cycle. See `docs/SESSION_MEMORY_RETRIEVAL.md`.
 
 ## Notes
 

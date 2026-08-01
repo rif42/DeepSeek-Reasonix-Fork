@@ -19,7 +19,11 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
+
+	"reasonix/internal/memory"
+	"reasonix/internal/memoryreview"
 
 	"reasonix/internal/agent"
 	"reasonix/internal/capability"
@@ -36,7 +40,6 @@ import (
 	"reasonix/internal/jobs"
 	"reasonix/internal/lsp"
 	"reasonix/internal/mcplaunch"
-	"reasonix/internal/memory"
 	"reasonix/internal/migration"
 	"reasonix/internal/netclient"
 	"reasonix/internal/outputstyle"
@@ -1664,6 +1667,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		}
 	}
 
+	var ctrl *control.Controller
 	ctrlOpts := control.Options{
 		Runner:                runner,
 		Executor:              executor,
@@ -1692,7 +1696,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		Jobs:                  jm,
 		Registry:              reg,
 		PluginCtx:             ctx,
-		MemoryReview:          memoryReviewConfig(cfg.Memory),
+		MemoryReview:          memoryReviewConfig(cfg.Memory, root, sink, opts.Stderr, func() *control.Controller { return ctrl }),
 		MCPDefaultCallTimeout: pluginSpecOptions.DefaultCallTimeout,
 		MCPConfigureSpec: func(spec *plugin.Spec) {
 			if spec == nil {
@@ -1766,7 +1770,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		// that capability: bots have a bounded timeout and can still answer cards.
 		ctrlOpts.RecoveryHeadless = recoveryHeadlessMode(opts)
 	}
-	ctrl := control.New(ctrlOpts)
+	ctrl = control.New(ctrlOpts)
 	// Share the recovery checkpoint with task/fleet sub-agents so background
 	// writers observe the same failure state as the root agent.
 	if taskTool != nil {
@@ -1810,18 +1814,103 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 }
 
 // memoryReviewConfig builds the controller's post-turn memory review nudge from
-// the [memory] config section. The Fire callback is intentionally left nil here
-// until the background reviewer is wired in; a nil Fire disables the nudge
-// without changing controller behavior (nil-safe in maybeNudgeMemoryReview).
-func memoryReviewConfig(mc config.MemoryConfig) *control.MemoryReviewConfig {
+// the [memory] config section. The Fire callback runs the background reviewer
+// on a detached goroutine (the controller already spawns it) against the live
+// session path, so it never blocks the turn and never rebuilds any session's
+// cache-stable system prompt.
+func memoryReviewConfig(mc config.MemoryConfig, root string, sink event.Sink, stderr io.Writer, getCtrl func() *control.Controller) *control.MemoryReviewConfig {
 	if mc.ReviewEnabled != nil && !*mc.ReviewEnabled {
 		return &control.MemoryReviewConfig{Enabled: false}
 	}
-	return &control.MemoryReviewConfig{
+	cfg := &control.MemoryReviewConfig{
 		Enabled:       true,
 		NudgeInterval: mc.ReviewNudgeInterval,
 		MinTurns:      mc.ReviewMinTurns,
 	}
+	if stderr == nil {
+		stderr = io.Discard
+	}
+	cfg.Fire = func() {
+		ctrl := getCtrl()
+		if ctrl == nil {
+			return
+		}
+		sessionPath := ctrl.SessionPath()
+		if sessionPath == "" {
+			return
+		}
+		rv := &memoryreview.Reviewer{
+			Runner:             reviewRunner{root: root, stderr: stderr},
+			Store:              memory.StoreFor(config.MemoryUserDir(), root),
+			Model:              mc.ReviewModel,
+			MaxTranscriptChars: mc.ReviewMaxTranscriptChars,
+			Stderr:             stderr,
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+		defer cancel()
+		_, report, err := rv.Review(ctx, sessionPath)
+		if err != nil {
+			sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn, Text: "Memory review failed.", Detail: err.Error()})
+			return
+		}
+		sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelInfo, Text: fmt.Sprintf("Memory review: created=%d updated=%d skipped=%d.", report.Created, report.Updated, report.Skipped)})
+	}
+	return cfg
+}
+
+// reviewRunner runs one headless review prompt through the same cache-warm
+// boot path interactive sessions use (boot.Build with a capturing sink). It
+// lives in boot rather than routines so boot can satisfy memoryreview.Runner
+// without a boot -> routines -> boot cycle; the ~15-line headless-run shape is
+// intentionally duplicated from internal/headless for the same reason.
+type reviewRunner struct {
+	root   string
+	stderr io.Writer
+}
+
+func (r reviewRunner) RunPrompt(ctx context.Context, prompt, model string) (string, error) {
+	sink := &reviewCaptureSink{}
+	ctrl, err := Build(ctx, Options{
+		Model:                strings.TrimSpace(model),
+		MaxSteps:             1,
+		RequireKey:           true,
+		Sink:                 sink,
+		WorkspaceRoot:        r.root,
+		Stderr:               r.stderr,
+		HeadlessApprovalMode: control.ToolApprovalAuto,
+	})
+	if err != nil {
+		return "", err
+	}
+	defer ctrl.Close()
+	ctrl.ApplyHeadlessApprovalMode(control.ToolApprovalAuto)
+	if err := ctrl.Run(ctx, prompt); err != nil {
+		return "", err
+	}
+	return sink.finalResponse(), nil
+}
+
+// reviewCaptureSink records the review run's final answer (the Message event
+// carries the complete turn text).
+type reviewCaptureSink struct {
+	mu       sync.Mutex
+	response strings.Builder
+}
+
+func (c *reviewCaptureSink) Emit(e event.Event) {
+	if e.Kind != event.Message {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.response.Reset()
+	c.response.WriteString(e.Text)
+}
+
+func (c *reviewCaptureSink) finalResponse() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return strings.TrimSpace(c.response.String())
 }
 
 // effectivePlannerModel centralizes planner precedence. The explicit ACP hard

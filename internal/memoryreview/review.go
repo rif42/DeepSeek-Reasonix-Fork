@@ -19,7 +19,6 @@ import (
 
 	"reasonix/internal/agent"
 	"reasonix/internal/memory"
-	"reasonix/internal/routines"
 )
 
 // Fact is one distilled memory fact as produced by the review model. The
@@ -47,10 +46,12 @@ type ApplyReport struct {
 	Errors  []string
 }
 
-// Runner runs one headless review prompt. *routines.AgentRunner satisfies it;
-// tests inject a fake.
+// Runner executes one headless review prompt and returns the model's final
+// response text. *routines.AgentRunner (via RunPrompt) satisfies it; tests
+// inject a fake. It intentionally avoids importing routines to keep boot free
+// of a boot -> routines -> boot cycle.
 type Runner interface {
-	Run(ctx context.Context, opts routines.RunOptions) (routines.RunResult, error)
+	RunPrompt(ctx context.Context, prompt, model string) (string, error)
 }
 
 // Reviewer distills a session transcript into memory facts.
@@ -66,6 +67,9 @@ type Reviewer struct {
 	// MaxTranscriptChars caps the transcript fed to the review (0 = default
 	// 40000).
 	MaxTranscriptChars int
+	// DryRun parses and reports the distilled facts without persisting them.
+	DryRun bool
+
 	// Stderr receives diagnostics. Nil = io.Discard.
 	Stderr io.Writer
 }
@@ -105,13 +109,16 @@ func (rv *Reviewer) ReviewSession(ctx context.Context, sess *agent.Session) (Res
 	}
 	transcript := RenderTranscript(sess, rv.maxChars())
 	prompt := BuildPrompt(transcript, rv.Store.List())
-	res, err := rv.Runner.Run(ctx, routines.RunOptions{Prompt: prompt, Model: rv.Model})
+	out, err := rv.Runner.RunPrompt(ctx, prompt, rv.Model)
 	if err != nil {
 		return Result{}, ApplyReport{}, fmt.Errorf("memoryreview: review run: %w", err)
 	}
-	facts, err := ParseFacts(res.FinalResponse)
+	facts, err := ParseFacts(out)
 	if err != nil {
 		return Result{}, ApplyReport{}, fmt.Errorf("memoryreview: parse review output: %w", err)
+	}
+	if rv.DryRun {
+		return Result{Facts: facts}, ApplyReport{}, nil
 	}
 	report := rv.Apply(facts)
 	return Result{Facts: facts}, report, nil

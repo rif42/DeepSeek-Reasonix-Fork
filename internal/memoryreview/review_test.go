@@ -8,18 +8,19 @@ import (
 	"reasonix/internal/agent"
 	"reasonix/internal/memory"
 	"reasonix/internal/provider"
-	"reasonix/internal/routines"
 )
 
 // fakeRunner returns a canned review response.
 type fakeRunner struct {
 	out    string
 	prompt string
+	model  string
 }
 
-func (f *fakeRunner) Run(_ context.Context, opts routines.RunOptions) (routines.RunResult, error) {
-	f.prompt = opts.Prompt
-	return routines.RunResult{FinalResponse: f.out}, nil
+func (f *fakeRunner) RunPrompt(_ context.Context, prompt, model string) (string, error) {
+	f.prompt = prompt
+	f.model = model
+	return f.out, nil
 }
 
 func TestParseFacts(t *testing.T) {
@@ -165,6 +166,24 @@ func TestReviewSessionAppliesFacts(t *testing.T) {
 	mems := st.List()
 	if len(mems) != 1 || mems[0].Scope != memory.FactScopeGlobal || mems[0].Type != memory.TypeUser {
 		t.Fatalf("persisted fact wrong: %+v", mems)
+	}
+}
+
+func TestReviewSessionDryRun(t *testing.T) {
+	sess := agent.NewSession("sys")
+	sess.Messages = []provider.Message{{Role: provider.RoleUser, Content: "hi"}}
+	fr := &fakeRunner{out: `{"facts":[{"type":"project","name":"dry-fact","title":"Dry","description":"d","body":"b"}]}`}
+	st := memory.StoreFor(t.TempDir(), t.TempDir())
+	rv := &Reviewer{Runner: fr, Store: st, DryRun: true}
+	res, report, err := rv.ReviewSession(context.Background(), sess)
+	if err != nil {
+		t.Fatalf("review: %v", err)
+	}
+	if len(res.Facts) != 1 {
+		t.Fatalf("dry run lost facts: %d", len(res.Facts))
+	}
+	if report.Created != 0 || len(st.List()) != 0 {
+		t.Fatalf("dry run wrote to the store: report=%+v store=%d", report, len(st.List()))
 	}
 }
 
