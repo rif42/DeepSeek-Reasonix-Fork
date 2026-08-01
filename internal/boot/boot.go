@@ -1692,6 +1692,7 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		Jobs:                  jm,
 		Registry:              reg,
 		PluginCtx:             ctx,
+		MemoryReview:          memoryReviewConfig(cfg.Memory),
 		MCPDefaultCallTimeout: pluginSpecOptions.DefaultCallTimeout,
 		MCPConfigureSpec: func(spec *plugin.Spec) {
 			if spec == nil {
@@ -1806,6 +1807,21 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 		ctrl.SetCapabilityProxyRouting(true)
 	}
 	return ctrl, nil
+}
+
+// memoryReviewConfig builds the controller's post-turn memory review nudge from
+// the [memory] config section. The Fire callback is intentionally left nil here
+// until the background reviewer is wired in; a nil Fire disables the nudge
+// without changing controller behavior (nil-safe in maybeNudgeMemoryReview).
+func memoryReviewConfig(mc config.MemoryConfig) *control.MemoryReviewConfig {
+	if mc.ReviewEnabled != nil && !*mc.ReviewEnabled {
+		return &control.MemoryReviewConfig{Enabled: false}
+	}
+	return &control.MemoryReviewConfig{
+		Enabled:       true,
+		NudgeInterval: mc.ReviewNudgeInterval,
+		MinTurns:      mc.ReviewMinTurns,
+	}
 }
 
 // effectivePlannerModel centralizes planner precedence. The explicit ACP hard
