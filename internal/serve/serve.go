@@ -65,6 +65,9 @@ type Server struct {
 	// already holds the startup session's lease; nil (tests, embedded use)
 	// disables lease gating.
 	leases *control.SessionLeaseKeeper
+	// rh is the lazily-built embedded routines service (scheduler + store),
+	// created on the first routines API call. Guarded by mu.
+	rh *routinesHub
 }
 
 // New builds a Server. bc must be the controller's event sink.
@@ -406,6 +409,14 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("GET /skills", s.skills)
 	mux.HandleFunc("GET /todos", s.todos)
 	mux.HandleFunc("POST /delete-session", s.deleteSession)
+	mux.HandleFunc("GET /routines", s.routinesIndex)
+	mux.HandleFunc("POST /routines/jobs", s.routinesCreateJob)
+	mux.HandleFunc("POST /routines/jobs/{id}/pause", s.routinesJobPause)
+	mux.HandleFunc("POST /routines/jobs/{id}/resume", s.routinesJobResume)
+	mux.HandleFunc("POST /routines/jobs/{id}/remove", s.routinesJobRemove)
+	mux.HandleFunc("POST /routines/jobs/{id}/run", s.routinesJobRun)
+	mux.HandleFunc("POST /routines/webhooks", s.routinesCreateWebhook)
+	mux.HandleFunc("POST /routines/webhooks/{slug}/remove", s.routinesWebhookRemove)
 	return logMiddleware(s.auth.middleware(csrfGuard(mux)))
 }
 

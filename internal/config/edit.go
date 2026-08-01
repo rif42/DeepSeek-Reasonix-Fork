@@ -2295,6 +2295,36 @@ func isUserConfigPath(path string) bool {
 	return false
 }
 
+// SetRoutinesEnabled sets the routines service enabled flag.
+func (c *Config) SetRoutinesEnabled(enabled bool) error {
+	c.Routines.Enabled = enabled
+	return nil
+}
+
+// SetRoutinesModel sets (or, with "", clears) the default model for routine
+// agent runs. A non-empty name must be a configured provider.
+func (c *Config) SetRoutinesModel(name string) error {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		c.Routines.Model = ""
+		return nil
+	}
+	if _, ok := c.Provider(name); !ok {
+		return fmt.Errorf("set routines model: no provider %q (configured: %s)", name, c.providerNames())
+	}
+	c.Routines.Model = name
+	return nil
+}
+
+// SetRoutinesWebhookAddr sets the webhook receiver listen address.
+func (c *Config) SetRoutinesWebhookAddr(addr string) error {
+	addr = strings.TrimSpace(addr)
+	if addr != "" {
+		c.Routines.WebhookAddr = addr
+	}
+	return nil
+}
+
 // IsUserConfigPath reports whether path is one of Reasonix's current or legacy
 // user-global config locations. Other paths use project-scoped rendering.
 func IsUserConfigPath(path string) bool {

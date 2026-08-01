@@ -253,3 +253,12 @@ stalled_warning_seconds = 900   # warn once per background job after this many q
 # token      = ""          # pre-shared token for auth_mode = "token" (auto-generated if empty)
 # password_hash = ""       # bcrypt hash for auth_mode = "password". Generate with: reasonix serve --hash-password <password>
 # behind_proxy = false      # set true when behind a trusted reverse proxy (nginx, Caddy, etc.) that sets X-Forwarded-* headers
+
+[routines]
+# Scheduled jobs (cron/interval) and HMAC-protected webhook triggers
+# (reasonix routines start).
+# enabled              = false            # service preference flag
+# model                = ""               # default model for routine runs (empty = default_model)
+# max_parallel_jobs    = 4                # concurrent job cap
+# webhook_addr         = "127.0.0.1:8644" # webhook receiver listen address
+# webhook_rate_limit   = 30               # per-route requests per minute

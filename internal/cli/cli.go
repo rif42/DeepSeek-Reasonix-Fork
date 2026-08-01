@@ -153,6 +153,9 @@ func Run(args []string, version string) int {
 	case "bot":
 		configureCLIThemeFromConfig()
 		return botCommand(rest, version)
+	case "routines":
+		configureCLIThemeFromConfig()
+		return routinesCommand(rest, version)
 	case "upgrade", "update":
 		configureCLIThemeFromConfig()
 		return upgradeCommand(rest, version)

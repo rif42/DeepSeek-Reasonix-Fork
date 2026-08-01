@@ -6,6 +6,10 @@
 /reasonix
 /reasonix.exe
 
+# Routine job outputs (regenerated on schedule by reasonix routines)
+/conversion.md
+/currencies.md
+
 # Website (Astro) build output
 /site/dist/
 /site/.astro/

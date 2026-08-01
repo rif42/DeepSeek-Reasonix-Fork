@@ -62,6 +62,7 @@ type Config struct {
 	Serve            ServeConfig         `toml:"serve"`
 	Secrets          SecretsConfig       `toml:"secrets"`
 	Remote           RemoteConfig        `toml:"remote"`
+	Routines         RoutinesConfig      `toml:"routines"`
 
 	providerSources            map[string]providerSourceScope
 	shadowedProjectProviders   []ProviderEntry
@@ -846,12 +847,28 @@ type ServeConfig struct {
 	BehindProxy bool `toml:"behind_proxy"`
 }
 
+// RoutinesConfig controls the routines service: scheduled jobs (cron/interval)
+// and HMAC-protected webhook triggers.
+type RoutinesConfig struct {
+	// Enabled marks the service as wanted; the CLI still starts it explicitly
+	// via `reasonix routines start`.
+	Enabled bool `toml:"enabled"`
+	// Model is the default model for routine agent runs; empty = default_model.
+	Model string `toml:"model"`
+	// MaxParallelJobs caps how many jobs may run concurrently (default 4).
+	MaxParallelJobs int `toml:"max_parallel_jobs"`
+	// WebhookAddr is the listen address for the webhook receiver
+	// (default 127.0.0.1:8644).
+	WebhookAddr string `toml:"webhook_addr"`
+	// WebhookRateLimit is the per-route request limit per minute (default 30).
+	WebhookRateLimit int `toml:"webhook_rate_limit"`
+}
+
 // NetworkConfig controls ordinary outbound HTTP traffic such as model providers,
 // wallet-balance lookups, updater checks, CodeGraph downloads, and web_fetch.
 // web_fetch reuses these proxy settings while keeping its own SSRF-guarded
 // dialer.
-type NetworkConfig struct {
-	// ProxyMode is "auto" (default; environment proxy for now), "env", "custom",
+type NetworkConfig struct {	// ProxyMode is "auto" (default; environment proxy for now), "env", "custom",
 	// or "off". auto leaves room for OS proxy detection later without changing the
 	// config shape.
 	ProxyMode string `toml:"proxy_mode"`
