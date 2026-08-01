@@ -6,12 +6,10 @@ import (
 	"io"
 	"path/filepath"
 	"strings"
-	"sync"
 
 	"reasonix/internal/boot"
 	"reasonix/internal/config"
-	"reasonix/internal/control"
-	"reasonix/internal/event"
+	"reasonix/internal/headless"
 )
 
 // AgentRunner runs one job headlessly through the standard Reasonix boot
@@ -32,49 +30,29 @@ type AgentRunner struct {
 
 // Run executes one headless agent turn and returns the final response text.
 func (r *AgentRunner) Run(ctx context.Context, opts RunOptions) (RunResult, error) {
-	sink := &captureSink{}
-	ctrl, err := boot.Build(ctx, boot.Options{
-		Model:                opts.Model,
-		MaxSteps:             r.MaxSteps,
-		RequireKey:           true,
-		Sink:                 sink,
-		WorkspaceRoot:        r.WorkspaceRoot,
-		SessionDir:           r.SessionDir,
-		Stderr:               r.Stderr,
-		HeadlessApprovalMode: control.ToolApprovalAuto,
-	})
+	res, err := headless.Run(ctx, boot.Options{
+		Model:         opts.Model,
+		MaxSteps:      r.MaxSteps,
+		RequireKey:    true,
+		WorkspaceRoot: r.WorkspaceRoot,
+		SessionDir:    r.SessionDir,
+		Stderr:        r.Stderr,
+	}, opts.Prompt)
 	if err != nil {
-		return RunResult{}, fmt.Errorf("routines: boot agent: %w", err)
-	}
-	defer ctrl.Close()
-	ctrl.ApplyHeadlessApprovalMode(control.ToolApprovalAuto)
-	if err := ctrl.Run(ctx, opts.Prompt); err != nil {
 		return RunResult{}, fmt.Errorf("routines: agent run: %w", err)
 	}
-	return RunResult{FinalResponse: sink.finalResponse()}, nil
+	return RunResult{FinalResponse: res.FinalResponse}, nil
 }
 
-// captureSink records the assistant's final answer (the Message event carries
-// the complete turn text).
-type captureSink struct {
-	mu       sync.Mutex
-	response strings.Builder
-}
-
-func (c *captureSink) Emit(e event.Event) {
-	if e.Kind != event.Message {
-		return
+// RunPrompt runs one headless turn with the given prompt and returns the final
+// response text. It satisfies memoryreview.Runner for the background review
+// pass (same cache-warm boot path).
+func (r *AgentRunner) RunPrompt(ctx context.Context, prompt, model string) (string, error) {
+	res, err := r.Run(ctx, RunOptions{Prompt: prompt, Model: strings.TrimSpace(model)})
+	if err != nil {
+		return "", err
 	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.response.Reset()
-	c.response.WriteString(e.Text)
-}
-
-func (c *captureSink) finalResponse() string {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return strings.TrimSpace(c.response.String())
+	return res.FinalResponse, nil
 }
 
 // RoutinesDataDir returns the directory where routine state lives:

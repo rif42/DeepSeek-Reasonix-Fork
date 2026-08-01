@@ -111,10 +111,15 @@ type Controller struct {
 	// memory owns the loaded memory snapshot, the pending turn-tail notes queue,
 	// and write serialization behind its own locks, off c.mu — so a memory-panel
 	// save never stalls an approval or status poll. See memory.go.
-	memory            memoryManager
-	cleanup           func()
-	responseLanguage  string
-	reasoningLanguage string
+	memory memoryManager
+	// memoryReview is the optional post-turn background memory review nudge
+	// (Hermes-style). Guarded by c.mu.
+	memoryReview         *MemoryReviewConfig
+	memoryReviewTurns    int  // tool-using turns since the last review nudge
+	memoryReviewInflight bool // one review in flight at a time
+	cleanup              func()
+	responseLanguage     string
+	reasoningLanguage    string
 	// disableColdResumePrune skips stale-tool-result elision on cold resume.
 	// Zero value keeps the prune on (the cheaper default).
 	disableColdResumePrune            bool
@@ -352,6 +357,17 @@ type externalFolderToolRefs interface {
 	RegisterReadRoot(token, root string)
 }
 
+// MemoryReviewConfig configures the post-turn background memory review nudge.
+// Fire is invoked on a detached goroutine when the nudge fires; the controller
+// itself never runs the review synchronously, so a review can never block or
+// perturb the turn (and never rebuilds the cache-stable system prompt).
+type MemoryReviewConfig struct {
+	Enabled       bool
+	NudgeInterval int    // tool-using turns between review nudges (0 = disabled)
+	MinTurns      int    // minimum session user turns before a review may fire
+	Fire          func() // called on a detached goroutine when the nudge fires
+}
+
 // Options carries the already-built pieces setup assembles. Lifecycle metadata
 // lets the controller mint and rotate session files; Host/Commands are surfaced
 // to frontends that resolve MCP prompts and slash commands.
@@ -395,7 +411,10 @@ type Options struct {
 	SkillProfile        skill.ProfileResolver
 	Hooks               *hook.Runner
 	Memory              *memory.Set
-	Cleanup             func()
+	// MemoryReview is the optional post-turn background memory review nudge;
+	// nil disables it. Filled by boot from the [memory] config section.
+	MemoryReview *MemoryReviewConfig
+	Cleanup      func()
 	// BalanceURL/BalanceKey wire the active provider's optional wallet-balance
 	// endpoint and bearer key; empty when the provider declares no balance_url.
 	BalanceURL    string
@@ -497,6 +516,7 @@ func New(opts Options) *Controller {
 		skillProfile:                      opts.SkillProfile,
 		hooks:                             opts.Hooks,
 		memory:                            newMemoryManager(opts.Memory),
+		memoryReview:                      opts.MemoryReview,
 		cleanup:                           opts.Cleanup,
 		responseLanguage:                  config.NormalizeLanguage(opts.ResponseLanguage),
 		reasoningLanguage:                 config.NormalizeReasoningLanguage(opts.ReasoningLanguage),
@@ -817,6 +837,91 @@ func (c *Controller) finishGuardedTurn(err error) {
 		done.Readiness = &event.FinalReadiness{Attempts: readinessErr.Attempts, Missing: append([]string(nil), readinessErr.Missing...)}
 	}
 	c.sink.Emit(done)
+	c.maybeNudgeMemoryReview()
+}
+
+// maybeNudgeMemoryReview fires the background memory review after a tool-heavy
+// turn once the nudge interval is reached. It only spawns a detached goroutine
+// (the review itself runs via the boot-wired Fire callback) and never touches
+// the cache-stable system prompt, so cache hit rates are unaffected. At most
+// one review runs at a time.
+func (c *Controller) maybeNudgeMemoryReview() {
+	cfg := c.memoryReview
+	if cfg == nil || !cfg.Enabled || cfg.Fire == nil {
+		return
+	}
+	if !c.lastTurnUsedTools() {
+		return
+	}
+	c.mu.Lock()
+	if c.closed || c.memoryReviewInflight {
+		c.mu.Unlock()
+		return
+	}
+	fire, next := memoryReviewGate(cfg.NudgeInterval, cfg.MinTurns, c.userTurnCount(), c.memoryReviewTurns)
+	c.memoryReviewTurns = next
+	if !fire {
+		c.mu.Unlock()
+		return
+	}
+	c.memoryReviewInflight = true
+	fireFn := cfg.Fire
+	c.mu.Unlock()
+	go func() {
+		defer func() {
+			c.mu.Lock()
+			c.memoryReviewInflight = false
+			c.mu.Unlock()
+		}()
+		fireFn()
+	}()
+}
+
+// memoryReviewGate decides whether a review nudge fires after a tool-using
+// turn. turns is the running counter; it returns whether to fire and the next
+// counter value (reset to 0 when firing). A non-positive interval disables the
+// review; fewer than minTurns user turns postpones it without resetting.
+func memoryReviewGate(interval, minTurns, userTurns, turns int) (fire bool, next int) {
+	if interval <= 0 {
+		return false, turns
+	}
+	if userTurns < minTurns {
+		return false, turns
+	}
+	turns++
+	if turns < interval {
+		return false, turns
+	}
+	return true, 0
+}
+
+// lastTurnUsedTools reports whether the most recent user turn included at
+// least one assistant tool call. Unlike toolWasCalledLastTurn (which only
+// inspects the final assistant message), it scans the whole last turn, so a
+// turn that called tools and then answered with text still counts as tool use.
+func (c *Controller) lastTurnUsedTools() bool {
+	msgs := c.History()
+	for i := len(msgs) - 1; i >= 0; i-- {
+		m := msgs[i]
+		if m.Role == provider.RoleUser {
+			return false // reached the start of the last turn without tools
+		}
+		if m.Role == provider.RoleAssistant && len(m.ToolCalls) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// userTurnCount returns the number of user-role messages in the session.
+func (c *Controller) userTurnCount() int {
+	n := 0
+	for _, m := range c.History() {
+		if m.Role == provider.RoleUser {
+			n++
+		}
+	}
+	return n
 }
 
 func turnOutcome(err error) string {

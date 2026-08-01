@@ -156,6 +156,9 @@ func Run(args []string, version string) int {
 	case "routines":
 		configureCLIThemeFromConfig()
 		return routinesCommand(rest, version)
+	case "memory":
+		configureCLIThemeFromConfig()
+		return memoryCommand(rest)
 	case "upgrade", "update":
 		configureCLIThemeFromConfig()
 		return upgradeCommand(rest, version)

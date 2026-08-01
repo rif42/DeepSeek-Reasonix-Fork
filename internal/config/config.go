@@ -63,6 +63,7 @@ type Config struct {
 	Secrets          SecretsConfig       `toml:"secrets"`
 	Remote           RemoteConfig        `toml:"remote"`
 	Routines         RoutinesConfig      `toml:"routines"`
+	Memory           MemoryConfig        `toml:"memory"`
 
 	providerSources            map[string]providerSourceScope
 	shadowedProjectProviders   []ProviderEntry
@@ -848,6 +849,7 @@ type ServeConfig struct {
 }
 
 // RoutinesConfig controls the routines service: scheduled jobs (cron/interval)
+// RoutinesConfig controls the routines service: scheduled jobs (cron/interval)
 // and HMAC-protected webhook triggers.
 type RoutinesConfig struct {
 	// Enabled marks the service as wanted; the CLI still starts it explicitly
@@ -864,11 +866,33 @@ type RoutinesConfig struct {
 	WebhookRateLimit int `toml:"webhook_rate_limit"`
 }
 
+// MemoryConfig controls the auto-memory system's background review nudge: a
+// detached LLM pass (Hermes-style) that distills a tool-heavy session into
+// consolidated memory facts. ReviewEnabled defaults to true when the key is
+// absent; set review_enabled = false to disable entirely.
+type MemoryConfig struct {
+	// ReviewEnabled turns on the post-turn background memory review.
+	// *bool so an absent key defaults to enabled.
+	ReviewEnabled *bool `toml:"review_enabled"`
+	// ReviewNudgeInterval is how many tool-using turns pass before a review
+	// nudge fires (0 = disabled; default 10).
+	ReviewNudgeInterval int `toml:"review_nudge_interval"`
+	// ReviewModel is the model used for the review run; empty = default_model.
+	ReviewModel string `toml:"review_model"`
+	// ReviewMinTurns is the minimum number of user turns a session must have
+	// before a review may fire (default 4).
+	ReviewMinTurns int `toml:"review_min_turns"`
+	// ReviewMaxTranscriptChars caps the transcript fed to the review run
+	// (default 40000). This is the review's budget guard.
+	ReviewMaxTranscriptChars int `toml:"review_max_transcript_chars"`
+}
+
 // NetworkConfig controls ordinary outbound HTTP traffic such as model providers,
 // wallet-balance lookups, updater checks, CodeGraph downloads, and web_fetch.
 // web_fetch reuses these proxy settings while keeping its own SSRF-guarded
 // dialer.
-type NetworkConfig struct {	// ProxyMode is "auto" (default; environment proxy for now), "env", "custom",
+type NetworkConfig struct {
+	// ProxyMode is "auto" (default; environment proxy for now), "env", "custom",
 	// or "off". auto leaves room for OS proxy detection later without changing the
 	// config shape.
 	ProxyMode string `toml:"proxy_mode"`

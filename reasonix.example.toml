@@ -262,3 +262,14 @@ stalled_warning_seconds = 900   # warn once per background job after this many q
 # max_parallel_jobs    = 4                # concurrent job cap
 # webhook_addr         = "127.0.0.1:8644" # webhook receiver listen address
 # webhook_rate_limit   = 30               # per-route requests per minute
+
+[memory]
+# Background memory review: after tool-heavy turns, a detached LLM pass
+# distills the session transcript into consolidated auto-memory facts
+# (Hermes-style). The review runs headlessly through the normal boot path, so
+# it shares the cache-stable system prompt and never rebuilds it mid-session.
+# review_enabled            = true   # set false to disable entirely
+# review_nudge_interval     = 10     # tool-using turns between reviews (0 = disabled)
+# review_model              = ""     # review model (empty = default_model)
+# review_min_turns          = 4      # minimum user turns before a review may fire
+# review_max_transcript_chars = 40000 # budget guard on the transcript fed to the review
