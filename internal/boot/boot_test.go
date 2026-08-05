@@ -55,6 +55,36 @@ func TestAgentKeepPolicyFromConfig(t *testing.T) {
 	}
 }
 
+// TestMemoryReviewConfigDefaults pins the [memory] review defaults: an absent
+// (zero) nudge interval / min turns falls back to 10 / 4 so the background
+// review fires out of the box, and review_enabled = false still disables it.
+func TestMemoryReviewConfigDefaults(t *testing.T) {
+	// Zero config: defaults apply, loop enabled.
+	cfg := memoryReviewConfig(config.MemoryConfig{}, "", nil, nil, func() *control.Controller { return nil })
+	if cfg == nil || !cfg.Enabled {
+		t.Fatalf("absent config should enable the review, got %+v", cfg)
+	}
+	if cfg.NudgeInterval != 10 {
+		t.Fatalf("NudgeInterval = %d, want default 10", cfg.NudgeInterval)
+	}
+	if cfg.MinTurns != 4 {
+		t.Fatalf("MinTurns = %d, want default 4", cfg.MinTurns)
+	}
+
+	// Explicit values are preserved.
+	cfg = memoryReviewConfig(config.MemoryConfig{ReviewNudgeInterval: 3, ReviewMinTurns: 2}, "", nil, nil, nil)
+	if cfg.NudgeInterval != 3 || cfg.MinTurns != 2 {
+		t.Fatalf("explicit values not preserved: nudge=%d min=%d", cfg.NudgeInterval, cfg.MinTurns)
+	}
+
+	// review_enabled = false disables the loop entirely.
+	disabled := false
+	cfg = memoryReviewConfig(config.MemoryConfig{ReviewEnabled: &disabled}, "", nil, nil, nil)
+	if cfg == nil || cfg.Enabled {
+		t.Fatalf("review_enabled=false should disable, got %+v", cfg)
+	}
+}
+
 func TestApplyRuntimeAutoPricingCurrency(t *testing.T) {
 	tests := []struct {
 		name            string

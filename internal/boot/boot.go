@@ -1813,11 +1813,24 @@ func Build(ctx context.Context, opts Options) (*control.Controller, error) {
 	return ctrl, nil
 }
 
+// defaultReviewNudgeInterval and defaultReviewMinTurns are the [memory]
+// review defaults applied when the corresponding config keys are absent
+// (zero). They mirror the documented defaults in reasonix.example.toml and
+// docs/SESSION_MEMORY_RETRIEVAL.md.
+const (
+	defaultReviewNudgeInterval = 10
+	defaultReviewMinTurns      = 4
+)
+
 // memoryReviewConfig builds the controller's post-turn memory review nudge from
 // the [memory] config section. The Fire callback runs the background reviewer
 // on a detached goroutine (the controller already spawns it) against the live
 // session path, so it never blocks the turn and never rebuilds any session's
 // cache-stable system prompt.
+//
+// Absent (zero) nudge_interval / min_turns fall back to the documented defaults
+// (10 / 4) so the review actually fires out of the box; set review_enabled =
+// false to disable the loop entirely.
 func memoryReviewConfig(mc config.MemoryConfig, root string, sink event.Sink, stderr io.Writer, getCtrl func() *control.Controller) *control.MemoryReviewConfig {
 	if mc.ReviewEnabled != nil && !*mc.ReviewEnabled {
 		return &control.MemoryReviewConfig{Enabled: false}
@@ -1826,6 +1839,12 @@ func memoryReviewConfig(mc config.MemoryConfig, root string, sink event.Sink, st
 		Enabled:       true,
 		NudgeInterval: mc.ReviewNudgeInterval,
 		MinTurns:      mc.ReviewMinTurns,
+	}
+	if cfg.NudgeInterval <= 0 {
+		cfg.NudgeInterval = defaultReviewNudgeInterval
+	}
+	if cfg.MinTurns <= 0 {
+		cfg.MinTurns = defaultReviewMinTurns
 	}
 	if stderr == nil {
 		stderr = io.Discard

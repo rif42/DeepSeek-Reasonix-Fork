@@ -269,7 +269,7 @@ stalled_warning_seconds = 900   # warn once per background job after this many q
 # (Hermes-style). The review runs headlessly through the normal boot path, so
 # it shares the cache-stable system prompt and never rebuilds it mid-session.
 # review_enabled            = true   # set false to disable entirely
-# review_nudge_interval     = 10     # tool-using turns between reviews (0 = disabled)
+# review_nudge_interval     = 10     # tool-using turns between reviews (0/absent = default 10)
 # review_model              = ""     # review model (empty = default_model)
-# review_min_turns          = 4      # minimum user turns before a review may fire
+# review_min_turns          = 4      # minimum user turns before a review may fire (0/absent = default 4)
 # review_max_transcript_chars = 40000 # budget guard on the transcript fed to the review

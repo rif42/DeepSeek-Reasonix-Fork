@@ -875,12 +875,13 @@ type MemoryConfig struct {
 	// *bool so an absent key defaults to enabled.
 	ReviewEnabled *bool `toml:"review_enabled"`
 	// ReviewNudgeInterval is how many tool-using turns pass before a review
-	// nudge fires (0 = disabled; default 10).
+	// nudge fires (0/absent = default 10; disable the loop with review_enabled
+	// = false instead).
 	ReviewNudgeInterval int `toml:"review_nudge_interval"`
 	// ReviewModel is the model used for the review run; empty = default_model.
 	ReviewModel string `toml:"review_model"`
 	// ReviewMinTurns is the minimum number of user turns a session must have
-	// before a review may fire (default 4).
+	// before a review may fire (0/absent = default 4).
 	ReviewMinTurns int `toml:"review_min_turns"`
 	// ReviewMaxTranscriptChars caps the transcript fed to the review run
 	// (default 40000). This is the review's budget guard.

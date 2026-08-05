@@ -50,7 +50,7 @@ per session and **never rebuilt mid-session**. The review loop preserves this:
 ```toml
 [memory]
 review_enabled            = true    # set false to disable entirely
-review_nudge_interval     = 10      # tool-using turns between reviews (0 = disabled)
+review_nudge_interval     = 10      # tool-using turns between reviews (0/absent = default 10)
 review_model              = ""      # review model (empty = default_model)
 review_min_turns          = 4       # minimum user turns before a review may fire
 review_max_transcript_chars = 40000 # budget guard on the transcript
