@@ -63,6 +63,9 @@ models      = ["deepseek-v4-flash", "deepseek-v4-pro"]
 default     = "deepseek-v4-flash"   # optional; defaults to the first of `models`
 api_key_env = "DEEPSEEK_API_KEY"
 context_window = 1000000
+# web_search = false   # server-side search (v1.19.7) is OFF by default in this
+#                       # fork — the plain web_fetch / crawl4ai path is used
+#                       # instead. Set true explicitly to enable it per provider.
 # Optional per-model context budgets. Omitted models inherit context_window.
 # model_overrides = { "deepseek-v4-flash" = { context_window = 1000000 } }
 # Official DeepSeek providers use CNY or USD regional prices from

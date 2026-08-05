@@ -43,10 +43,10 @@ func IsOfficialDeepSeekWebSearchEndpoint(e *ProviderEntry) bool {
 	}
 }
 
-// EffectiveWebSearch resolves the persisted tri-state. Official DeepSeek
-// Anthropic and Responses endpoints default on when old configuration omitted
-// web_search, while compatible third-party endpoints remain opt-in. An explicit
-// false always wins so users can turn the capability off permanently.
+// EffectiveWebSearch resolves the persisted tri-state. Fork default: server-side
+// web search is OFF unless explicitly enabled with web_search = true — the fork
+// uses the plain web_fetch/crawl4ai path instead (see docs/UPGRADE-CONFLICTS-1.19.7.md).
+// Compatible third-party endpoints stay opt-in too. An explicit true always wins.
 func EffectiveWebSearch(e *ProviderEntry) bool {
 	if !SupportsServerWebSearch(e) {
 		return false
@@ -54,5 +54,5 @@ func EffectiveWebSearch(e *ProviderEntry) bool {
 	if e.WebSearch != nil {
 		return *e.WebSearch
 	}
-	return IsOfficialDeepSeekWebSearchEndpoint(e)
+	return false
 }

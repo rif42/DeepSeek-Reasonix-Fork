@@ -9,7 +9,7 @@ import (
 	"github.com/BurntSushi/toml"
 )
 
-func TestEffectiveWebSearchDefaultsOnlySupportedOfficialDeepSeekAPIs(t *testing.T) {
+func TestEffectiveWebSearchRequiresExplicitOptIn(t *testing.T) {
 	explicitTrue := true
 	explicitFalse := false
 	tests := []struct {
@@ -18,14 +18,14 @@ func TestEffectiveWebSearchDefaultsOnlySupportedOfficialDeepSeekAPIs(t *testing.
 		want  bool
 	}{
 		{
-			name:  "official responses omitted defaults on",
+			name:  "official responses omitted stays off (fork default)",
 			entry: ProviderEntry{Kind: "responses", BaseURL: "https://api.deepseek.com"},
-			want:  true,
+			want:  false,
 		},
 		{
-			name:  "official anthropic omitted defaults on",
+			name:  "official anthropic omitted stays off (fork default)",
 			entry: ProviderEntry{Kind: "anthropic", BaseURL: "https://api.deepseek.com/anthropic"},
-			want:  true,
+			want:  false,
 		},
 		{
 			name:  "official responses explicit off wins",
@@ -36,6 +36,11 @@ func TestEffectiveWebSearchDefaultsOnlySupportedOfficialDeepSeekAPIs(t *testing.
 			name:  "compatible third party omitted stays off",
 			entry: ProviderEntry{Kind: "responses", BaseURL: "https://gateway.example/v1"},
 			want:  false,
+		},
+		{
+			name:  "official responses explicit on wins",
+			entry: ProviderEntry{Kind: "responses", BaseURL: "https://api.deepseek.com", WebSearch: &explicitTrue},
+			want:  true,
 		},
 		{
 			name:  "compatible third party explicit on wins",
@@ -60,7 +65,7 @@ func TestEffectiveWebSearchDefaultsOnlySupportedOfficialDeepSeekAPIs(t *testing.
 		{
 			name:  "official trailing slash accepted",
 			entry: ProviderEntry{Kind: "anthropic", BaseURL: "https://api.deepseek.com/anthropic/"},
-			want:  true,
+			want:  false,
 		},
 		{
 			name:  "insecure scheme is not official",
@@ -109,7 +114,7 @@ func TestWebSearchTOMLRoundTripPreservesExplicitOff(t *testing.T) {
 	}
 }
 
-func TestLegacyOfficialWebSearchOmissionDefaultsOnAcrossLoaders(t *testing.T) {
+func TestLegacyOfficialWebSearchOmissionStaysOffAcrossLoaders(t *testing.T) {
 	const legacy = `config_version = 1
 default_model = "deepseek-responses/deepseek-v4-flash"
 
@@ -137,8 +142,8 @@ model = "deepseek-v4-flash"
 		if !ok {
 			t.Fatalf("%s legacy provider missing", name)
 		}
-		if entry.WebSearch != nil || !EffectiveWebSearch(entry) {
-			t.Fatalf("%s legacy omitted web search = pointer:%v effective:%t, want nil/true", name, entry.WebSearch, EffectiveWebSearch(entry))
+		if entry.WebSearch != nil || EffectiveWebSearch(entry) {
+			t.Fatalf("%s legacy omitted web search = pointer:%v effective:%t, want nil/false (fork default)", name, entry.WebSearch, EffectiveWebSearch(entry))
 		}
 	}
 }
