@@ -77,3 +77,7 @@ scripts/official-theme-art/out/
 scripts/official-theme-art/__pycache__/
 agent-complexity-report.txt
 site/.generated/
+
+# Nested sibling repos moved into the fork root (each keeps its own .git)
+/crawl4ai/
+/life/
