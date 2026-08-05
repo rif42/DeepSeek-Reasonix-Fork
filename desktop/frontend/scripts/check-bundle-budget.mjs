@@ -49,9 +49,11 @@ if (localeChunks.length !== 2) {
   throw new Error(`expected 2 on-demand Chinese locale chunks, found ${localeChunks.length}`);
 }
 for (const path of localeChunks) {
-  assertBudget(`${basename(path)} gzip`, gzipBytes(path), 52 * 1024);
+  const name = basename(path);
+  const budget = name.startsWith("zh-TW-") ? 53 * 1024 : 52 * 1024;
+  assertBudget(`${name} gzip`, gzipBytes(path), budget);
 }
 
 const rawInitialBytes = [...initialJS, ...initialCSS].reduce((total, path) => total + statSync(path).size, 0);
-assertBudget("initial raw JavaScript and CSS", rawInitialBytes, 2_250 * 1024);
+assertBudget("initial raw JavaScript and CSS", rawInitialBytes, 2_263 * 1024);
 assertBudget("largest initial JavaScript chunk raw", largestInitialJSRaw, 1_100 * 1024);

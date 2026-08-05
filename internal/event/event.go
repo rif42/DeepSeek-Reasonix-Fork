@@ -113,6 +113,18 @@ const (
 	LevelWarn
 )
 
+// NoticeAudience separates a notice's recipient from its severity. The empty
+// default preserves the existing contract: ordinary notices are eligible for
+// every frontend. Operator notices describe local runtime maintenance and must
+// not be forwarded as end-user chat messages. Local frontends and diagnostics
+// remain free to surface or quietly record them under their own policy.
+type NoticeAudience string
+
+const (
+	NoticeAudienceDefault  NoticeAudience = ""
+	NoticeAudienceOperator NoticeAudience = "operator"
+)
+
 // Profile carries the subagent model/effort resolved for this call.
 type Profile struct {
 	Model  string
@@ -304,19 +316,25 @@ const (
 // wording edits in Go no longer silently break localization. Values are
 // wire-stable: never rename or reuse one once shipped.
 const (
-	NoticeCodeFinalReadiness  = "final_readiness"
-	NoticeCodeEmptyFinal      = "empty_final"
-	NoticeCodeExecutorHandoff = "executor_handoff"
-	NoticeCodeToolBudget      = "tool_budget"
-	NoticeCodeLoopGuard       = "loop_guard"
-	NoticeCodeWorkspaceLease  = "workspace_lease"
-	NoticeCodeCancelledTurn   = "cancelled_turn_display"
-	NoticeCodeUnappliedSteer  = "unapplied_steer"
+	NoticeCodeFinalReadiness                = "final_readiness"
+	NoticeCodeEmptyFinal                    = "empty_final"
+	NoticeCodeExecutorHandoff               = "executor_handoff"
+	NoticeCodeToolBudget                    = "tool_budget"
+	NoticeCodeLoopGuard                     = "loop_guard"
+	NoticeCodeWorkspaceLease                = "workspace_lease"
+	NoticeCodeCancelledTurn                 = "cancelled_turn_display"
+	NoticeCodeUnappliedSteer                = "unapplied_steer"
+	NoticeCodeSessionRecoveryForked         = "session_recovery_forked"
+	NoticeCodeSessionRecoveryAdopted        = "session_recovery_adopted"
+	NoticeCodeSessionRecoveryAdoptedCovered = "session_recovery_adopted_covered"
+	NoticeCodeSessionRecoveryDepthCap       = "session_recovery_depth_cap"
+	NoticeCodeSessionShutdownRecoveryForked = "session_shutdown_recovery_forked"
 )
 
 type Event struct {
 	Kind             Kind
 	Text             string                    // Reasoning / Text / Message / Notice / Phase
+	ModelRef         string                    // Usage: canonical "provider/model" ref that produced this usage
 	Detail           string                    // Notice: optional diagnostic text for expandable details
 	Code             string                    // Notice: stable id for frontend localization; empty = unmapped
 	Reasoning        string                    // Message: the full reasoning chain
@@ -334,6 +352,7 @@ type Event struct {
 	SessionHit   int             // Usage: cumulative cache-hit prompt tokens this session
 	SessionMiss  int             // Usage: cumulative cache-miss prompt tokens this session
 	Level        Level           // Notice
+	Audience     NoticeAudience  // Notice: empty = ordinary frontend delivery; operator = no end-user chat forwarding
 	Approval     Approval        // ApprovalRequest
 	Ask          Ask             // AskRequest
 	Err          error           // TurnDone: non-nil on failure
@@ -352,6 +371,25 @@ type ReadinessAuditSink interface {
 	RecordReadinessAudit(evidence.ReadinessAudit)
 }
 
+// TurnCompletionSink is an optional sink capability for synchronous controller
+// entry points that do not publish a TurnDone UI event. It keeps accounting
+// independent from frontend event lifecycles without synthesizing an event that
+// transports may mistake for an interactive completion.
+type TurnCompletionSink interface {
+	RecordTurnCompletion()
+}
+
+// RecordTurnCompletion records one successfully admitted top-level controller
+// run on sinks that opt into completion accounting.
+func RecordTurnCompletion(s Sink) {
+	if nilutil.IsNil(s) {
+		return
+	}
+	if ts, ok := s.(TurnCompletionSink); ok {
+		ts.RecordTurnCompletion()
+	}
+}
+
 // RecordReadinessAudit forwards a readiness audit receipt to sinks that opt in.
 func RecordReadinessAudit(s Sink, a evidence.ReadinessAudit) {
 	if nilutil.IsNil(s) {
@@ -359,6 +397,43 @@ func RecordReadinessAudit(s Sink, a evidence.ReadinessAudit) {
 	}
 	if rs, ok := s.(ReadinessAuditSink); ok {
 		rs.RecordReadinessAudit(a)
+	}
+}
+
+// ProtocolRecoveryKind is a content-free internal observation about a provider
+// protocol repair. It is deliberately separate from Event/Notice so recovery
+// stays invisible in chat transcripts and frontends do not need to understand
+// provider implementation details.
+type ProtocolRecoveryKind string
+
+const (
+	ProtocolRecoveryMissingReasoningDetected        ProtocolRecoveryKind = "missing_reasoning_detected"
+	ProtocolRecoveryMissingReasoningRetryAttempted  ProtocolRecoveryKind = "missing_reasoning_retry_attempted"
+	ProtocolRecoveryMissingReasoningRetryRecovered  ProtocolRecoveryKind = "missing_reasoning_retry_recovered"
+	ProtocolRecoveryMissingReasoningRetryReplaced   ProtocolRecoveryKind = "missing_reasoning_retry_replaced_response"
+	ProtocolRecoveryMissingReasoningRetrySuppressed ProtocolRecoveryKind = "missing_reasoning_retry_suppressed"
+	ProtocolRecoveryMissingReasoningFallback        ProtocolRecoveryKind = "missing_reasoning_fallback_used"
+)
+
+type ProtocolRecoveryAudit struct {
+	Kind ProtocolRecoveryKind
+}
+
+// ProtocolRecoveryAuditSink is an optional sink capability. Implementations
+// must keep it content-free; prompts, responses, endpoints, model names, and
+// tool arguments do not belong in this audit channel.
+type ProtocolRecoveryAuditSink interface {
+	RecordProtocolRecovery(ProtocolRecoveryAudit)
+}
+
+// RecordProtocolRecovery forwards a content-free recovery observation only to
+// sinks that explicitly opt in. Ordinary UI sinks receive nothing.
+func RecordProtocolRecovery(s Sink, a ProtocolRecoveryAudit) {
+	if nilutil.IsNil(s) {
+		return
+	}
+	if rs, ok := s.(ProtocolRecoveryAuditSink); ok {
+		rs.RecordProtocolRecovery(a)
 	}
 }
 

@@ -38,11 +38,12 @@ var English = Messages{
 	ResumeAlreadyActive: "already in that session",
 	ResumedTitle:        "resumed session",
 
-	RenameUsage:     "usage: /rename <new title>  or  /rename <n> <new title>",
-	RenameNoSession: "no active session to rename",
-	RenameDoneFmt:   "session renamed to %q",
-	ResumePickTitle: "Resume a saved session",
-	ResumePickHint:  "↑/↓ move · Enter resume · Esc cancel",
+	RenameUsage:            "usage: /rename <new title>  or  /rename <n> <new title>",
+	RenameNoSession:        "no active session to rename",
+	RenameDoneFmt:          "session renamed to %q",
+	ResumePickTitle:        "Resume a saved session",
+	ResumePickHint:         "↑/↓ move · Enter resume · Esc cancel",
+	ResumeRecoveryBadgeFmt: "[recovery copy · parent %s]",
 
 	ChatThinking:                           "thinking…",
 	ChatThoughtForFmt:                      "thought for %ds",
@@ -153,18 +154,19 @@ var English = Messages{
 	CompactionAuto:    "auto",
 	CompactionManual:  "manual",
 
-	SlashCompactDone:   "session compacted — older middle replaced by a summary, recent turns kept",
-	SlashCompactFailed: "compaction failed",
-	SlashNewDone:       "new session started — previous transcript saved",
-	SlashNewFailed:     "could not start a new session",
-	SlashClearPrompt:   "Clear current context without saving?",
-	SlashClearDone:     "current context cleared",
-	SlashClearFailed:   "could not clear current context",
-	SlashClsDone:       "screen cleared",
-	SlashUnavailable:   "command unavailable in this build",
-	SlashUnknown:       "unknown command",
-	SlashTodoCleared:   "task list dismissed",
-	SlashHelp:          "commands: /compact · /new · /clear · /resume · /rewind · /tree · /branch · /switch · /todo · /verbose · /model (switch model) · /effort · /theme · /language · /mcp · /skills · /plugins · /hooks · /paste-image · /memory · /migrate · /goal · /remember · /quit · /help · plus skills (/init, /explore, …)",
+	SlashCompactDone:          "session compacted — older middle replaced by a summary, recent turns kept",
+	SlashCompactFailed:        "compaction failed",
+	SlashNewDone:              "new session started — previous transcript saved",
+	SlashNewFailed:            "could not start a new session",
+	SlashClearPrompt:          "Clear current context without saving?",
+	SlashClearDone:            "current context cleared",
+	SlashClearFailed:          "could not clear current context",
+	SlashClsDone:              "screen cleared",
+	SlashUnavailable:          "command unavailable in this build",
+	SlashUnknown:              "unknown command",
+	SlashUnknownSentAsMessage: "sent as a regular message",
+	SlashTodoCleared:          "task list dismissed",
+	SlashHelp:                 "commands: /compact · /new · /clear · /resume · /rewind · /tree · /branch · /switch · /todo · /verbose · /model (switch model) · /effort · /theme · /language · /mcp · /skills · /plugins · /hooks · /paste-image · /docs · /memory · /migrate · /goal · /remember · /quit · /help · plus skills (/init, /explore, …)",
 
 	SkillPickerTitle:             "Skills",
 	SkillPickerAvailableFmt:      "%d available",
@@ -244,6 +246,7 @@ var English = Messages{
 	CmdModel:            "switch model",
 	CmdStatus:           "show session status",
 	CmdWorkMode:         "switch work mode",
+	CmdDocs:             "search version-matched embedded documentation",
 	CmdMemory:           "inspect instructions, memory, and recovery",
 	CmdMigrate:          "retry legacy data migration",
 	CmdGoal:             "set or clear the active goal",
@@ -356,6 +359,10 @@ var English = Messages{
 	RewindPickHint:            "↑/↓ move · Enter choose · Esc close",
 	RewindRestoreTitleFmt:     "⟲ Restore to turn %d ",
 	RewindApplyHint:           "↑/↓ · Enter apply · Esc back",
+	RewindCoverageTitle:       "⚠ Partial file coverage",
+	RewindCoverageWarningFmt:  "%d coverage gap(s) mean some file changes may not be restored.",
+	RewindConfirmHint:         "Enter/y confirm · Esc back",
+	RewindUnavailableFmt:      "rewind unavailable: %s",
 	RewindEmpty:               "(empty)",
 
 	SelectProvidersLabel:     "Select providers to enable",
@@ -493,6 +500,7 @@ var English = Messages{
 
 	// self-update
 	UpgradeChecking:            "Checking for updates…",
+	UpgradeChannelDeprecated:   "Release channels are retired; using the official release.",
 	UpgradeDevBuild:            "dev builds cannot self-update",
 	UpgradeFetchFailed:         "failed to check for updates: %v",
 	UpgradeInvalidVersion:      "remote version is not valid semver",
@@ -519,7 +527,6 @@ var English = Messages{
 	ReportKept:                "Report kept locally.",
 	ReportDeletedFmt:          "Deleted CLI crash report %s.",
 	ReportSentFmt:             "Sent CLI crash report %s.",
-	ReportSafeModeBlocked:     "crash reports cannot be sent in Safe Mode; the local report was kept",
 	ReportConfigFailedFmt:     "cannot load network configuration: %v",
 	ReportUploadFailedFmt:     "report upload failed; the local report was kept: %v",
 	ReportSentDeleteFailedFmt: "report was sent but the local copy could not be deleted: %v",
@@ -548,6 +555,7 @@ Usage:
   reasonix acp [--model NAME]                           serve Agent Client Protocol over stdio (also: reasonix --acp)
   reasonix setup [path]                                 interactive config wizard; writes reasonix.toml (+ .env)
   reasonix config reasoning-language [auto|zh|en]        configure visible reasoning language
+  reasonix config compact-ratio [--local] [65..85]       configure automatic compaction threshold
   reasonix config telemetry [auto|on|off]                configure content-free CLI usage metrics
   reasonix report [list|show|send|delete] [ID]           review and explicitly send local CLI crash reports
   reasonix mcp <add|remove|list|import>                 manage MCP servers in reasonix.toml
@@ -562,7 +570,7 @@ Usage:
   reasonix task list|show --json [--dir PATH]           inspect redacted task state
   reasonix bot start|doctor|weixin-login                multi-channel IM bot gateway
   reasonix routines <start|cron|webhook>                scheduled jobs + webhook automations
-  reasonix upgrade [stable|preview] [--check] [--force]  self-update on the saved channel (advanced: --channel; also: reasonix update)
+  reasonix upgrade [--check] [--force]                   update to the latest official release (also: reasonix update)
   reasonix version
   reasonix help
 

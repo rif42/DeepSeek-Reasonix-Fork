@@ -63,11 +63,12 @@ type Messages struct {
 	ResumeAlreadyActive string // shown when /resume targets the current session
 	ResumedTitle        string // banner title after a /resume switch
 
-	RenameUsage     string // /rename with no args
-	RenameNoSession string // /rename with no active session
-	RenameDoneFmt   string // /rename succeeded (one %s = new title)
-	ResumePickTitle string // header in the interactive resume picker
-	ResumePickHint  string // keyboard hint in the interactive resume picker
+	RenameUsage            string // /rename with no args
+	RenameNoSession        string // /rename with no active session
+	RenameDoneFmt          string // /rename succeeded (one %s = new title)
+	ResumePickTitle        string // header in the interactive resume picker
+	ResumePickHint         string // keyboard hint in the interactive resume picker
+	ResumeRecoveryBadgeFmt string // recovery-copy badge — %s = short parent session id
 
 	// chat TUI status line / approval banner.
 	ChatThinking                           string // live reasoning marker label, e.g. "thinking…"
@@ -195,6 +196,7 @@ type Messages struct {
 	SlashTodoCleared             string // "/todo" dismissed the pinned task list
 	SlashUnavailable             string // the command is configured off (no callback wired)
 	SlashUnknown                 string // shown when the user types an unrecognised "/cmd"
+	SlashUnknownSentAsMessage    string // suffix: the unrecognised "/cmd" line was sent as a regular message
 	SlashHelp                    string // listed commands
 	SlashPromptEmpty             string // an MCP prompt returned no text to send
 	SlashMCPNone                 string // /mcp when no MCP servers are connected
@@ -233,6 +235,7 @@ type Messages struct {
 	CmdModel            string // /model
 	CmdStatus           string // /status
 	CmdWorkMode         string // /work-mode
+	CmdDocs             string // /docs
 	CmdMemory           string // /memory
 	CmdMigrate          string // /migrate
 	CmdGoal             string // /goal
@@ -347,6 +350,10 @@ type Messages struct {
 	RewindPickHint            string
 	RewindRestoreTitleFmt     string
 	RewindApplyHint           string
+	RewindCoverageTitle       string
+	RewindCoverageWarningFmt  string
+	RewindConfirmHint         string
+	RewindUnavailableFmt      string
 	RewindEmpty               string
 
 	// skill picker overlay (/skills interactive panel in CLI TUI)
@@ -535,6 +542,7 @@ type Messages struct {
 
 	// `reasonix upgrade` / `reasonix update` — self-update
 	UpgradeChecking            string // "Checking for updates…"
+	UpgradeChannelDeprecated   string // legacy channel selection is ignored
 	UpgradeDevBuild            string // dev builds cannot self-update
 	UpgradeFetchFailed         string // "failed to check for updates: %v"
 	UpgradeInvalidVersion      string // remote version not valid semver
@@ -562,7 +570,6 @@ type Messages struct {
 	ReportKept                string
 	ReportDeletedFmt          string
 	ReportSentFmt             string
-	ReportSafeModeBlocked     string
 	ReportConfigFailedFmt     string
 	ReportUploadFailedFmt     string
 	ReportSentDeleteFailedFmt string

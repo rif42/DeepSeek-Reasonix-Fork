@@ -33,13 +33,14 @@ var ChineseTraditional = Messages{
 	ResumeRequiresTTY:   "--resume 需要互動式終端；用 --continue 直接恢復最近一次",
 	PickSessionLabel:    "恢復哪個會話？",
 
-	ResumeListHeader:    "會話（/resume <n> 切換）",
-	ResumeBusy:          "請先完成或取消當前這一輪再恢復會話",
-	ResumeBadIndexFmt:   "請選擇 1–%d 的會話（用 /resume 檢視列表）",
-	ResumeAlreadyActive: "已在該會話中",
-	ResumedTitle:        "已恢復會話",
-	ResumePickTitle:     "選擇要恢復的會話",
-	ResumePickHint:      "↑/↓ 移動 · Enter 恢復 · Esc 取消",
+	ResumeListHeader:       "會話（/resume <n> 切換）",
+	ResumeBusy:             "請先完成或取消當前這一輪再恢復會話",
+	ResumeBadIndexFmt:      "請選擇 1–%d 的會話（用 /resume 檢視列表）",
+	ResumeAlreadyActive:    "已在該會話中",
+	ResumedTitle:           "已恢復會話",
+	ResumePickTitle:        "選擇要恢復的會話",
+	ResumePickHint:         "↑/↓ 移動 · Enter 恢復 · Esc 取消",
+	ResumeRecoveryBadgeFmt: "[衝突副本 · 父會話 %s]",
 
 	ChatThinking:                           "思考中…",
 	ChatThoughtForFmt:                      "思考了 %d 秒",
@@ -148,14 +149,15 @@ var ChineseTraditional = Messages{
 	CompactionAuto:    "自動",
 	CompactionManual:  "手動",
 
-	SlashCompactDone:   "已壓縮 — 舊的中段換成一段摘要，最近幾輪保留原樣",
-	SlashCompactFailed: "壓縮失敗",
-	SlashNewDone:       "已開啟新上下文 — 之前的對話已存檔",
-	SlashNewFailed:     "新建會話失敗",
-	SlashUnavailable:   "當前建構不支援該命令",
-	SlashUnknown:       "未知命令",
-	SlashTodoCleared:   "已清除任務清單",
-	SlashHelp:          "命令：/compact · /new（/clear）· /resume · /rewind · /tree · /branch · /switch · /todo · /verbose · /model（切換模型）· /effort · /theme · /language · /mcp · /skills · /plugins · /hooks · /paste-image · /memory · /migrate · /remember · /quit · /help · 以及 skills（/init、/explore …）",
+	SlashCompactDone:          "已壓縮 — 舊的中段換成一段摘要，最近幾輪保留原樣",
+	SlashCompactFailed:        "壓縮失敗",
+	SlashNewDone:              "已開啟新上下文 — 之前的對話已存檔",
+	SlashNewFailed:            "新建會話失敗",
+	SlashUnavailable:          "當前建構不支援該命令",
+	SlashUnknown:              "未知命令",
+	SlashUnknownSentAsMessage: "已作為普通訊息發送",
+	SlashTodoCleared:          "已清除任務清單",
+	SlashHelp:                 "命令：/compact · /new（/clear）· /resume · /rewind · /tree · /branch · /switch · /todo · /verbose · /model（切換模型）· /effort · /theme · /language · /mcp · /skills · /plugins · /hooks · /paste-image · /docs · /memory · /migrate · /remember · /quit · /help · 以及 skills（/init、/explore …）",
 
 	SkillPickerTitle:             "Skills",
 	SkillPickerAvailableFmt:      "%d 個可用",
@@ -233,6 +235,7 @@ var ChineseTraditional = Messages{
 	CmdModel:            "切換模型",
 	CmdStatus:           "顯示工作階段狀態",
 	CmdWorkMode:         "切換工作模式",
+	CmdDocs:             "搜尋與目前版本匹配的內建文件",
 	CmdMemory:           "檢視指令、記憶與復原狀態",
 	CmdMigrate:          "重試舊資料遷移",
 	CmdRemember:         "儲存一條記憶",
@@ -337,6 +340,10 @@ var ChineseTraditional = Messages{
 	RewindPickHint:            "↑/↓ 移動 · Enter 選擇 · Esc 關閉",
 	RewindRestoreTitleFmt:     "⟲ 恢復到第 %d 輪 ",
 	RewindApplyHint:           "↑/↓ · Enter 套用 · Esc 返回",
+	RewindCoverageTitle:       "⚠ 檔案覆蓋不完整",
+	RewindCoverageWarningFmt:  "偵測到 %d 個覆蓋缺口，部分檔案修改可能無法恢復。",
+	RewindConfirmHint:         "Enter/y 確認 · Esc 返回",
+	RewindUnavailableFmt:      "無法回滾：%s",
 	RewindEmpty:               "(空)",
 
 	SelectProvidersLabel:     "選擇要啟用的 provider",
@@ -468,7 +475,6 @@ var ChineseTraditional = Messages{
 	ReportKept:                "報告已保留在本機。",
 	ReportDeletedFmt:          "已刪除 CLI 當機報告 %s。",
 	ReportSentFmt:             "已傳送 CLI 當機報告 %s。",
-	ReportSafeModeBlocked:     "Safe Mode 下不能傳送當機報告；本機報告已保留",
 	ReportConfigFailedFmt:     "無法載入網路設定：%v",
 	ReportUploadFailedFmt:     "報告上傳失敗；本機報告已保留：%v",
 	ReportSentDeleteFailedFmt: "報告已傳送，但無法刪除本機副本：%v",
@@ -497,6 +503,7 @@ var ChineseTraditional = Messages{
   reasonix acp [--model NAME]                           透過 stdio 提供 Agent Client Protocol（也可用：reasonix --acp）
   reasonix setup [path]                                 互動式設定精靈；生成 reasonix.toml（及 .env）
   reasonix config reasoning-language [auto|zh|en]        設定可見思考語言
+  reasonix config compact-ratio [--local] [65..85]       設定自動壓縮閾值
   reasonix config telemetry [auto|on|off]                設定不含內容的 CLI 使用統計
   reasonix report [list|show|send|delete] [ID]           審閱並明確傳送本機 CLI 當機報告
   reasonix mcp <add|remove|list|import>                 管理 reasonix.toml 裡的 MCP 伺服器
@@ -510,7 +517,7 @@ var ChineseTraditional = Messages{
   reasonix hook list|status --json [--dir PATH]         檢視脫敏 Hook 狀態
   reasonix task list|show --json [--dir PATH]           檢視脫敏 Task 狀態
   reasonix bot start|doctor|weixin-login                多管道 IM bot 閘道
-  reasonix upgrade [stable|preview] [--check] [--force]  按已儲存渠道自更新（進階用法：--channel；別名：reasonix update）
+  reasonix upgrade [--check] [--force]                   更新到最新正式版（別名：reasonix update）
   reasonix version
   reasonix help
 
@@ -559,6 +566,7 @@ var ChineseTraditional = Messages{
 	ProviderPickLabel:          "選擇 %s 的一個模型",
 	ProviderNoModelsFmt:        "供應商 %s 沒有已配置的模型",
 	UpgradeChecking:            "正在檢查更新…",
+	UpgradeChannelDeprecated:   "發布渠道已停用；將使用最新正式版。",
 	UpgradeDevBuild:            "開發版本無法自更新",
 	UpgradeFetchFailed:         "檢查更新失敗：%v",
 	UpgradeInvalidVersion:      "遠端版本不是有效的 semver",

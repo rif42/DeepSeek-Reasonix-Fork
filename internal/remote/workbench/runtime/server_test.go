@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"reasonix/internal/agent"
+	"reasonix/internal/billing"
 	"reasonix/internal/checkpoint"
 	"reasonix/internal/command"
 	"reasonix/internal/control"
@@ -38,6 +39,15 @@ type fakeController struct {
 	status        control.RuntimeStatus
 	steerAccepted bool
 	steers        []string
+}
+
+type balanceFakeController struct {
+	*fakeController
+	balance *billing.Balance
+}
+
+func (c *balanceFakeController) Balance(context.Context) (*billing.Balance, error) {
+	return c.balance, nil
 }
 
 type blockingController struct {
@@ -92,6 +102,72 @@ func TestSocketPathStaysWithinPortableUnixLimitForLongHome(t *testing.T) {
 	}
 }
 
+func testRuntimeSocket(t *testing.T) string {
+	t.Helper()
+	socket := filepath.Join(t.TempDir(), "r.sock")
+	if len(socket) <= 100 {
+		return socket
+	}
+	tempBase := os.TempDir()
+	if goruntime.GOOS == "darwin" {
+		tempBase = "/tmp"
+	}
+	shortDir, err := os.MkdirTemp(tempBase, "rx-wb-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(shortDir) })
+	return filepath.Join(shortDir, "r.sock")
+}
+
+func TestListenAndServeReturnsWhenContextIsCanceled(t *testing.T) {
+	socket := testRuntimeSocket(t)
+	srv := New(Options{Workspace: t.TempDir(), Version: "test"})
+	t.Cleanup(srv.Close)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	errCh := make(chan error, 1)
+	go func() { errCh <- srv.ListenAndServe(ctx, socket) }()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		srv.mu.Lock()
+		listening := srv.ln != nil
+		srv.mu.Unlock()
+		if listening {
+			break
+		}
+		select {
+		case err := <-errCh:
+			t.Fatalf("ListenAndServe returned before cancellation: %v", err)
+		default:
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("runtime did not start listening")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if _, err := os.Stat(socket + ".lock"); err != nil {
+		t.Fatalf("runtime lock was not created: %v", err)
+	}
+
+	cancel()
+	select {
+	case err := <-errCh:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("ListenAndServe error = %v, want context.Canceled", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("ListenAndServe did not return after context cancellation")
+	}
+
+	for _, path := range []string{socket, socket + ".lock"} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("runtime path %q still exists after shutdown: %v", path, err)
+		}
+	}
+}
+
 type persistentFakeController struct {
 	*fakeController
 	sessionDir  string
@@ -105,6 +181,7 @@ type profileFakeController struct {
 	approvalMode string
 	goal         string
 	goalStatus   string
+	goalWrites   int
 	goalWriteErr error
 }
 
@@ -152,6 +229,7 @@ func (c *profileFakeController) SetGoalDurable(goal, _ string) error {
 	if err := os.WriteFile(store.SessionGoalState(c.sessionPath), []byte(strings.TrimSpace(goal)+"\n"), 0o644); err != nil {
 		return err
 	}
+	c.goalWrites++
 	c.SetGoal(goal)
 	return nil
 }
@@ -316,6 +394,56 @@ func (c *fakeController) AdoptHistory(h []provider.Message, _ string) {
 	c.history = append([]provider.Message(nil), h...)
 }
 
+func TestSessionBalanceUsesRequestedPricingCurrency(t *testing.T) {
+	srv := New(Options{Workspace: t.TempDir(), Version: "test"})
+	ctrl := &balanceFakeController{
+		fakeController: &fakeController{model: "deepseek/deepseek-v4-flash"},
+		balance: &billing.Balance{Available: true, Infos: []billing.Info{
+			{Currency: "CNY", TotalBalance: "70.16"},
+			{Currency: "USD", TotalBalance: "9.82"},
+		}},
+	}
+	target := srv.installTestSession(ctrl)
+	result, err := srv.sessionBalance(context.Background(), protocol.SessionBalanceParams{
+		RuntimeQuery: protocol.RuntimeQuery{
+			ExpectedHostEpoch: srv.hostEpoch, Target: target, ExpectedRuntimeEpoch: "runtime_test",
+		},
+		Currency: "USD",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Available || result.Display != "$9.82" {
+		t.Fatalf("USD balance = %+v, want available $9.82", result)
+	}
+
+	ctrl.balance.Infos = []billing.Info{{Currency: "CNY", TotalBalance: "70.16"}}
+	mismatch, err := srv.sessionBalance(context.Background(), protocol.SessionBalanceParams{
+		RuntimeQuery: protocol.RuntimeQuery{
+			ExpectedHostEpoch: srv.hostEpoch, Target: target, ExpectedRuntimeEpoch: "runtime_test",
+		},
+		Currency: "USD",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !mismatch.Available || mismatch.Display != "CNY ¥70.16" {
+		t.Fatalf("CNY-only balance = %+v, want explicit non-converted currency", mismatch)
+	}
+
+	legacy, err := srv.sessionBalance(context.Background(), protocol.SessionBalanceParams{
+		RuntimeQuery: protocol.RuntimeQuery{
+			ExpectedHostEpoch: srv.hostEpoch, Target: target, ExpectedRuntimeEpoch: "runtime_test",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !legacy.Available || legacy.Display != "¥70.16" {
+		t.Fatalf("legacy balance = %+v, want CNY-first compatibility", legacy)
+	}
+}
+
 func TestSessionCatalogAndSlashArgsUseHostControllerCapabilities(t *testing.T) {
 	store := memory.Store{Dir: t.TempDir()}
 	saved, err := store.SaveWithOptions(memory.Memory{
@@ -336,6 +464,9 @@ func TestSessionCatalogAndSlashArgsUseHostControllerCapabilities(t *testing.T) {
 		memory: &memory.Set{Store: store},
 	}
 	catalog := buildSessionCatalog(context.Background(), ctrl)
+	if len(catalog.BuiltinCommands) != 1 || catalog.BuiltinCommands[0].Name != control.DocsSlashName {
+		t.Fatalf("built-in commands = %+v, want unshadowed docs", catalog.BuiltinCommands)
+	}
 	if len(catalog.Commands) != 1 || catalog.Commands[0].Name != "review" {
 		t.Fatalf("commands = %+v", catalog.Commands)
 	}
@@ -377,6 +508,40 @@ func TestSessionCatalogAndSlashArgsUseHostControllerCapabilities(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("remote /memory completion did not use the Host memory catalog: %+v", result.Items)
+	}
+}
+
+func TestSessionCatalogPublishesHostResolvedDocsFallback(t *testing.T) {
+	tests := []struct {
+		name     string
+		commands []command.Command
+		skills   []skill.Skill
+	}{
+		{
+			name: "hidden plugin command alias",
+			commands: []command.Command{
+				{Name: "docs", Plugin: "manuals", Hidden: true},
+				{Name: "manuals:docs", Plugin: "manuals"},
+			},
+		},
+		{
+			name:   "compatible plugin skill alias",
+			skills: []skill.Skill{{Name: "docs", Plugin: "manuals"}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := &catalogController{
+				fakeController: &fakeController{model: "local/model"},
+				commands:       tt.commands,
+				skills:         tt.skills,
+			}
+			catalog := buildSessionCatalog(context.Background(), ctrl)
+			if len(catalog.BuiltinCommands) != 1 || catalog.BuiltinCommands[0].Name != control.ReasonixDocsSlashName {
+				t.Fatalf("built-in commands = %+v, want qualified docs fallback", catalog.BuiltinCommands)
+			}
+		})
 	}
 }
 
@@ -605,20 +770,7 @@ func TestRuntimeSessionCreateAndFileList(t *testing.T) {
 	ws := t.TempDir()
 	sessionDir := filepath.Join(t.TempDir(), "sessions")
 	registryPath := filepath.Join(t.TempDir(), "remote-sessions.json")
-	// Short absolute socket path — macOS rejects long unix paths.
-	sock := filepath.Join(t.TempDir(), "r.sock")
-	if len(sock) > 100 {
-		tempBase := os.TempDir()
-		if goruntime.GOOS == "darwin" {
-			tempBase = "/tmp"
-		}
-		shortDir, err := os.MkdirTemp(tempBase, "rx-wb-")
-		if err != nil {
-			t.Fatal(err)
-		}
-		t.Cleanup(func() { _ = os.RemoveAll(shortDir) })
-		sock = filepath.Join(shortDir, "r.sock")
-	}
+	sock := testRuntimeSocket(t)
 	srv := New(Options{Workspace: ws, Version: "test", SessionDir: sessionDir, RegistryPath: registryPath, BuildController: func(_ context.Context, model string, _ *string, _ event.Sink) (SessionController, error) {
 		return &persistentFakeController{fakeController: &fakeController{model: model}, sessionDir: sessionDir}, nil
 	}})
@@ -1048,6 +1200,81 @@ func TestSetProfileAppliesGoalInSameTransaction(t *testing.T) {
 	}
 	if _, err := os.Stat(srv.profileTransactionPath()); !os.IsNotExist(err) {
 		t.Fatalf("profile transaction journal remains after commit: %v", err)
+	}
+}
+
+func TestSetProfileNoOpIsUnchanged(t *testing.T) {
+	sessionDir := t.TempDir()
+	srv := New(Options{Workspace: t.TempDir(), SessionDir: sessionDir, RegistryPath: filepath.Join(t.TempDir(), "sessions.json")})
+	srv.registryRead = true
+	ctrl := &profileFakeController{persistentFakeController: &persistentFakeController{
+		fakeController: &fakeController{model: "local/model"}, sessionDir: sessionDir,
+		sessionPath: filepath.Join(sessionDir, "session.jsonl"),
+	}, approvalMode: string(protocol.ToolApprovalAsk)}
+	target := srv.installTestSession(ctrl)
+	if err := srv.persistSessionRegistry(); err != nil {
+		t.Fatal(err)
+	}
+	collaboration := protocol.CollaborationNormal
+	approval := protocol.ToolApprovalAsk
+	goal := ""
+
+	result, err := srv.setProfile(context.Background(), protocol.SessionProfileSetParams{
+		SessionMutation: protocol.SessionMutation{
+			ExpectedHostEpoch: srv.hostEpoch, Target: target, ExpectedRuntimeEpoch: "runtime_test",
+		},
+		Patch: protocol.ProfilePatch{
+			CollaborationMode: &collaboration,
+			ToolApprovalMode:  &approval,
+			Goal:              &goal,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Disposition != protocol.ProfileUnchanged || result.RuntimeEpoch != "runtime_test" {
+		t.Fatalf("no-op result = %+v", result)
+	}
+	if ctrl.goalWrites != 0 || ctrl.planMode || ctrl.approvalMode != string(protocol.ToolApprovalAsk) {
+		t.Fatalf("no-op touched controller: writes=%d plan=%v approval=%q", ctrl.goalWrites, ctrl.planMode, ctrl.approvalMode)
+	}
+	ctrl.status.Running = true
+	result, err = srv.setProfile(context.Background(), protocol.SessionProfileSetParams{
+		SessionMutation: protocol.SessionMutation{
+			ExpectedHostEpoch: srv.hostEpoch, Target: target, ExpectedRuntimeEpoch: "runtime_test",
+		},
+		Patch: protocol.ProfilePatch{CollaborationMode: &collaboration, ToolApprovalMode: &approval, Goal: &goal},
+	})
+	if err != nil || result.Disposition != protocol.ProfileUnchanged {
+		t.Fatalf("busy no-op result = %+v err=%v", result, err)
+	}
+}
+
+func TestSetProfileSameNonRunningGoalReactivates(t *testing.T) {
+	sessionDir := t.TempDir()
+	srv := New(Options{Workspace: t.TempDir(), SessionDir: sessionDir, RegistryPath: filepath.Join(t.TempDir(), "sessions.json")})
+	srv.registryRead = true
+	ctrl := &profileFakeController{persistentFakeController: &persistentFakeController{
+		fakeController: &fakeController{model: "local/model"}, sessionDir: sessionDir,
+		sessionPath: filepath.Join(sessionDir, "session.jsonl"),
+	}, approvalMode: string(protocol.ToolApprovalAsk), goal: "ship it", goalStatus: string(protocol.GoalBlocked)}
+	target := srv.installTestSession(ctrl)
+	if err := srv.persistSessionRegistry(); err != nil {
+		t.Fatal(err)
+	}
+	goal := "ship it"
+
+	result, err := srv.setProfile(context.Background(), protocol.SessionProfileSetParams{
+		SessionMutation: protocol.SessionMutation{
+			ExpectedHostEpoch: srv.hostEpoch, Target: target, ExpectedRuntimeEpoch: "runtime_test",
+		},
+		Patch: protocol.ProfilePatch{Goal: &goal},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Disposition != protocol.ProfileUpdated || ctrl.GoalStatus() != string(protocol.GoalRunning) || ctrl.goalWrites != 1 {
+		t.Fatalf("reactivated profile = %+v controller=(%q,%q,writes=%d)", result, ctrl.Goal(), ctrl.GoalStatus(), ctrl.goalWrites)
 	}
 }
 

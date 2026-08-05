@@ -141,6 +141,36 @@ type startBackgroundJobTool struct {
 	release chan struct{}
 }
 
+func TestCancelJobCannotCrossSessionBoundary(t *testing.T) {
+	manager := jobs.NewManager(event.Discard)
+	t.Cleanup(manager.Close)
+	pathA := filepath.Join(t.TempDir(), "session-a.jsonl")
+	pathB := filepath.Join(t.TempDir(), "session-b.jsonl")
+	controllerA := New(Options{Jobs: manager})
+	controllerB := New(Options{Jobs: manager})
+	controllerA.sessionPath = pathA
+	controllerB.sessionPath = pathB
+
+	jobA := manager.StartForSession(agent.BranchID(pathA), "bash", "a", func(ctx context.Context, _ io.Writer) (string, error) {
+		<-ctx.Done()
+		return "", ctx.Err()
+	})
+	jobB := manager.StartForSession(agent.BranchID(pathB), "bash", "b", func(ctx context.Context, _ io.Writer) (string, error) {
+		<-ctx.Done()
+		return "", ctx.Err()
+	})
+
+	if controllerA.CancelJob(jobB.ID) {
+		t.Fatal("controller A cancelled controller B's job")
+	}
+	if !controllerA.CancelJob(jobA.ID) {
+		t.Fatal("controller A did not cancel its own job")
+	}
+	if !controllerB.CancelJob(jobB.ID) {
+		t.Fatal("controller B did not retain ownership of its job")
+	}
+}
+
 func (t startBackgroundJobTool) Name() string        { return "start_background_job" }
 func (t startBackgroundJobTool) Description() string { return "start background job" }
 func (t startBackgroundJobTool) Schema() json.RawMessage {
@@ -710,7 +740,8 @@ func TestSnapshotAdoptsNewerDiskForPureStalePrefix(t *testing.T) {
 	staleSess.Add(provider.Message{Role: provider.RoleUser, Content: "first"})
 	staleSess.Add(provider.Message{Role: provider.RoleAssistant, Content: "one"})
 	staleExec := agent.New(nil, nil, staleSess, agent.Options{}, event.Discard)
-	stale := New(Options{Executor: staleExec, SessionDir: dir, SessionPath: path, Label: "test"})
+	sink := &noticeSink{}
+	stale := New(Options{Executor: staleExec, SessionDir: dir, SessionPath: path, Label: "test", Sink: sink})
 
 	currentSess := agent.NewSession("sys")
 	currentSess.Add(provider.Message{Role: provider.RoleUser, Content: "first"})
@@ -739,6 +770,10 @@ func TestSnapshotAdoptsNewerDiskForPureStalePrefix(t *testing.T) {
 	}
 	if got := len(stale.executor.Session().Snapshot()); got != 5 {
 		t.Fatalf("stale controller adopted message count = %d, want 5", got)
+	}
+	notice, ok := sink.lastNotice()
+	if !ok || notice.Code != event.NoticeCodeSessionRecoveryAdopted || notice.Audience != event.NoticeAudienceOperator {
+		t.Fatalf("adoption notice = %+v, want typed operator recovery notice", notice)
 	}
 }
 
@@ -1189,7 +1224,11 @@ func TestRecoveryBranchPersistsLaterOwnedCompactionRewrite(t *testing.T) {
 	}
 	notices := sink.notices()
 	if len(notices) == 0 {
-		t.Fatal("initial recovery emitted no user notice")
+		t.Fatal("initial recovery emitted no operator notice")
+	}
+	notice, ok := sink.lastNotice()
+	if !ok || notice.Code != event.NoticeCodeSessionRecoveryForked || notice.Audience != event.NoticeAudienceOperator {
+		t.Fatalf("fork recovery notice = %+v, want typed operator recovery notice", notice)
 	}
 	if got := notices[len(notices)-1]; strings.Contains(got, agent.BranchID(recoveryPath)) || strings.Contains(got, "recovery branch") {
 		t.Fatalf("initial recovery notice exposed internal branch detail: %q", got)
@@ -1327,11 +1366,13 @@ func TestRecoverShutdownSnapshotPersistsAndReanchorsSession(t *testing.T) {
 	current.Add(provider.Message{Role: provider.RoleAssistant, Content: "shutdown tail"})
 	exec := agent.New(nil, nil, current, agent.Options{}, event.Discard)
 	var handoff SessionRecoveryInfo
+	sink := &noticeSink{}
 	c := New(Options{
 		Executor:    exec,
 		SessionDir:  dir,
 		SessionPath: path,
 		Label:       "shutdown",
+		Sink:        sink,
 		OnSessionRecovered: func(info SessionRecoveryInfo) error {
 			handoff = info
 			return nil
@@ -1357,6 +1398,10 @@ func TestRecoverShutdownSnapshotPersistsAndReanchorsSession(t *testing.T) {
 	}
 	if got := recovered.Snapshot(); len(got) != 3 || got[2].Content != "shutdown tail" {
 		t.Fatalf("shutdown recovery transcript = %+v", got)
+	}
+	notice, ok := sink.lastNotice()
+	if !ok || notice.Code != event.NoticeCodeSessionShutdownRecoveryForked || notice.Audience != event.NoticeAudienceOperator {
+		t.Fatalf("shutdown recovery notice = %+v, want typed operator recovery notice", notice)
 	}
 }
 
@@ -1954,6 +1999,22 @@ type noticeSink struct {
 	events []event.Event
 }
 
+func TestSessionRecoveryNoticesAreOperatorScoped(t *testing.T) {
+	for _, code := range []string{
+		event.NoticeCodeSessionRecoveryForked,
+		event.NoticeCodeSessionRecoveryAdopted,
+		event.NoticeCodeSessionRecoveryAdoptedCovered,
+		event.NoticeCodeSessionRecoveryDepthCap,
+		event.NoticeCodeSessionShutdownRecoveryForked,
+	} {
+		notice := sessionRecoveryNotice(code, "maintenance")
+		if notice.Kind != event.Notice || notice.Level != event.LevelWarn ||
+			notice.Audience != event.NoticeAudienceOperator || notice.Code != code {
+			t.Fatalf("session recovery notice %q = %+v, want typed operator warning", code, notice)
+		}
+	}
+}
+
 func (s *noticeSink) Emit(e event.Event) {
 	s.mu.Lock()
 	s.events = append(s.events, e)
@@ -1970,6 +2031,17 @@ func (s *noticeSink) notices() []string {
 		}
 	}
 	return out
+}
+
+func (s *noticeSink) lastNotice() (event.Event, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := len(s.events) - 1; i >= 0; i-- {
+		if s.events[i].Kind == event.Notice {
+			return s.events[i], true
+		}
+	}
+	return event.Event{}, false
 }
 
 func TestSnapshotConflictAtRecoveryDepthCapForceSavesCurrentBranch(t *testing.T) {
@@ -2024,6 +2096,10 @@ func TestSnapshotConflictAtRecoveryDepthCapForceSavesCurrentBranch(t *testing.T)
 	notices := sink.notices()
 	if len(notices) == 0 || !strings.Contains(notices[len(notices)-1], "saved the current conflict copy in place") {
 		t.Fatalf("notices = %v, want depth-cap notice", notices)
+	}
+	notice, ok := sink.lastNotice()
+	if !ok || notice.Code != event.NoticeCodeSessionRecoveryDepthCap || notice.Audience != event.NoticeAudienceOperator {
+		t.Fatalf("depth-cap notice = %+v, want typed operator recovery notice", notice)
 	}
 	if stale.NeedsRewriteSave() {
 		t.Fatal("rewrite baseline not re-anchored by depth-cap force save")

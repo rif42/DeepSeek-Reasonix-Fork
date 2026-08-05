@@ -25,6 +25,7 @@
 - [能力诊断](#能力诊断)
 - [插件（MCP）](#插件mcp)
 - [斜杠命令](#斜杠命令)
+- [内置文档检索](#内置文档检索)
 - [@ 引用](#-引用)
 - [双模型协同](#双模型协同)
 
@@ -73,6 +74,7 @@ api_key_env = "DEEPSEEK_API_KEY"
 [tools]
 enabled = []   # 省略/为空 = 全部内置工具
 bash_timeout_seconds = 120   # 前台安全上限；设为 0 表示不设工具层超时
+mcp_startup_timeout_seconds = 30   # 后台 initialize + tools/list 安全上限
 mcp_call_timeout_seconds = 300   # MCP 调用默认安全上限；可用 plugin/tool 覆盖
 
 [environment]
@@ -104,6 +106,7 @@ auth_mode = "none"             # none|token|password；绑定到非 localhost �
 [[plugins]]
 name    = "example"
 command = "reasonix-plugin-example"
+startup_timeout_seconds = 60   # 可选：initialize + tools/list 上限
 call_timeout_seconds = 600   # 可选：单个 MCP server 的调用超时
 tool_timeout_seconds = { "generate_video" = 1800 }   # 可选：raw MCP tool 名称
 ```
@@ -141,7 +144,7 @@ telemetry 请求之前只询问一次。提示为 `[Y/n]`：直接回车、输�
 `auto`；输入 `n` 或 `no` 会保存为 `off` 并删除待发送计数。选择保存后不再提示，允许的
 后续上报保持静默。如果偏好设置保存失败，则不会上传任何内容。
 
-在 CI、Safe Mode、开发构建中始终关闭；设置 `DO_NOT_TRACK` 或
+在 CI、开发构建中始终关闭；设置 `DO_NOT_TRACK` 或
 `REASONIX_TELEMETRY=0` 也会关闭。`auto` 模式下，重定向、pipe 或其他非交互会话
 不会上报。尚未保存选择时，这些不符合条件的会话既不会提示，也不会上报。授权后的
 网络失败完全静默，不会改变 stdout、stderr 或进程退出码；未发送计数只会保存在有
@@ -173,8 +176,8 @@ reasonix report send [ID]       # 明确发送；成功后才删除本地副本
 reasonix report delete [ID]     # 不发送，直接删除
 ```
 
-通过 pipe 或重定向运行 `reasonix report` 时只会预览，不会询问或发送。Safe Mode 也会
-禁止发送，但仍允许审阅或删除本地报告。CLI telemetry 设置不会自动发送或自动删除这些
+通过 pipe 或重定向运行 `reasonix report` 时只会预览，不会询问或发送。CLI telemetry
+设置不会自动发送或自动删除这些
 需要单独审阅的报告。Go 无法恢复 runtime fatal throw、操作系统强制终止，以及未包装
 后台 goroutine 中的 panic，因此这些情况不会生成本地报告。
 
@@ -638,6 +641,7 @@ stdio 参考实现（`echo`、`wordcount`、一个 `review` prompt、一个 styl
 [[plugins]]                       # 本地 stdio 服务器
 name    = "example"
 command = "reasonix-plugin-example"
+# startup_timeout_seconds = 60    # 可选：initialize + tools/list 上限
 # call_timeout_seconds = 600       # 可选：单个 MCP server 的调用超时
 # tool_timeout_seconds = { "generate_video" = 1800 }   # 可选：raw MCP tool 名称
 
@@ -653,6 +657,11 @@ headers = { Authorization = "Bearer ${STRIPE_KEY}" }
 若要跨 skills / hooks / 插件包 / MCP 做只读健康检查（不改配置），见
 [能力诊断](./CAPABILITY_DIAGNOSTICS.zh-CN.md)
 （`reasonix doctor capabilities` 或 **设置 → 诊断**）。
+
+交互调用方只会为冷启动短暂等待；即使等待结束，共享启动仍会在后台继续，不会被杀掉后反复重启，
+服务器上线后重试工具即可。`mcp_startup_timeout_seconds`（默认 `30`）限制从进程启动、授权、
+`initialize` 到 `tools/list` 的完整启动流程；`mcp_call_timeout_seconds` 只作用于连接成功后的
+RPC 调用。两者都可按服务器覆盖。
 
 **已有 Claude Code 的 `.mcp.json`？** 直接放到项目根目录，Reasonix 会原样读取——其
 `mcpServers` 规范（`command`/`args`/`env`、`type`/`url`/`headers`、`${VAR}` 展开）
@@ -763,6 +772,35 @@ Review the staged diff. Focus on $ARGUMENTS, list bugs with file:line.
 
 `$ARGUMENTS` 展开为全部空格分隔参数，`$1`…`$N` 为位置参数。MCP prompts 也以
 `/mcp__<server>__<prompt>` 形式出现在这里。
+
+## 内置文档检索
+
+Reasonix 会把 `docs/` 中的 Markdown 文档和已审查的 `release-notes/releases.json` 更新日志
+目录随 CLI 和桌面端一起编译发布。只读 `docs` 工具通过本地 BM25 检索这份与当前安装版本
+完全一致的离线语料，并可按命中的 `section_id` 读取完整章节及来源。每个版本都会生成
+`changelog/v1.19.5.md`、`changelog/v1.19.5.zh-CN.md` 这类中英文虚拟文档，因此可以离线
+查询指定版本的新增功能、升级说明、修复和已知风险。涉及 Reasonix 配置、CLI/桌面端行为、
+版本历史、权限、MCP、记忆、恢复、Provider 或维护流程的问题，Agent 应先查询这里，再考虑
+联网搜索或凭经验回答。
+
+普通路径不需要设置、联网、向量数据库或 embedding 服务。搜索会优先匹配提问语言，同时支持
+显式 `en`、`zh-CN`、受众和目录筛选。Balanced 与 Delivery 默认暴露该工具；Economy 会在需要时
+按需连接 `docs` 来源。每次返回都会给出产品版本、不可变源码 revision 与语料 SHA-256 digest。
+发布 CI 会实际编译 CLI；只有编译后的清单与候选提交的 `docs/*.md`、
+`release-notes/releases.json` 和构建身份完全一致时才允许发布。因此，更新较快的在线
+`main-v2` 页面不会静默覆盖与本地版本匹配的说明或更新历史。
+
+直接输入 `/docs` 会在本地显示内置语料的版本、revision、digest 和使用示例，不调用模型。
+输入 `/docs <问题>`（例如 `/docs 1.19.5 更新日志`）时，Reasonix 会先在本地完成检索，再把
+与当前版本匹配的证据交给当前配置的 AI 生成带来源的回答。这个命令路径不依赖模型是否主动
+选择 `docs` 工具；普通自然语言问题仍可由模型自动调用该工具。已有自定义命令以及兼容插件或
+Skill 别名会继续拥有 `/docs`；发生冲突时，CLI 与桌面端通常会改为通过 `/reasonix:docs` 暴露
+内置语料。如果这个限定名也已被占用，Reasonix 会选择下一个空闲的 `reasonix:` 限定后备名，
+不会覆盖原命令。远程桌面端使用主机解析后的命令目录，因此菜单显示的入口与主机实际执行目标
+保持一致。
+
+如果 Pull Request 修改了用户可见的 CLI、桌面端、配置、Provider、权限或工具行为，必须声明
+是否已同步更新内置文档；如果无需更新，则必须说明现有的版本匹配说明为何仍然正确。
 
 ## Goal 与 AutoResearch
 
@@ -882,6 +920,12 @@ destructive MCP 目标、来自未授权 server 的 reader，以及一切会改�
 | `reasonix review`（CLI） | 只读评审 diff 或分支 |
 | 桌面端 preview/review 子代理 | 桌面端只读分析面 |
 
+在持久化会话中，`parallel_tasks` 与 `fleet` 不再把所有完整答案拼成一个容易被截断的
+工具结果，而是为每个已完成子 Agent 返回有界预览和独立的 `Subagent reference`。父 Agent
+可用 `read_subagent_result` 按 `offset_bytes` 分页读取该引用对应的完整答案；读取范围受当前
+会话 lineage 与工作区约束。没有持久化父会话的 headless 运行仍保持 ephemeral，只返回公平
+分配的有界预览，不能生成持久引用。
+
 交互式双模型 Planner 使用专用构造路径（`NewPlannerAgent`）：仍阻止 bash、文件写入与普通
 writer，但可通过固定的 `use_capability` 代理调用已授权、非 destructive 的 MCP，不再要求
 `readOnlyHint`。直接 `mcp__*` schema 永不进入 Planner 工具列表，因此 MCP 安装/连接变动
@@ -907,7 +951,8 @@ server 无法在这里提升权限。严格只读边界比独立 Planner 更窄�
 
 启动会话时可以用 `--profile economy|balanced|delivery` 选择运行模式，例如
 `reasonix run --profile delivery "修复并验证这个 bug"`。Economy（轻量）初始只带 9 个工具：
-直接读/bash/编辑/写入、后台 shell 生命周期控制、`ask` 和 `connect_tool_source`；专用搜索/文件/
+直接读/bash/编辑/写入、后台 shell 生命周期控制、`ask` 和 `connect_tool_source`；内置文档、
+专用搜索/文件/
 workflow 工具、session history、memory 写入、slash command、Skills、MCP、LSP、网络、安装与
 subagent 都在任务需要时才连接。
 Balanced（均衡）是提供完整工具面的默认档；配置独立 Planner 时，Planner 与 Executor 都会获得各自的
