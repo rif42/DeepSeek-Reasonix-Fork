@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"flag"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +15,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"reasonix/internal/agent"
 	"reasonix/internal/boot"
@@ -2179,5 +2181,29 @@ func TestParseRuntimeProfile(t *testing.T) {
 	}
 	if _, err := parseRuntimeProfile("fast"); err == nil {
 		t.Fatal("unknown profile should fail")
+	}
+}
+
+func TestResolveServeIdleShutdownFlagOverridesConfig(t *testing.T) {
+	fs := flag.NewFlagSet("serve-test", flag.ContinueOnError)
+	flagVal := fs.Duration("idle-shutdown", 0, "")
+
+	// Flag not set → config value wins.
+	if got := resolveServeIdleShutdown(10*time.Minute, fs, flagVal); got != 10*time.Minute {
+		t.Fatalf("unset flag changed config value to %v", got)
+	}
+	// Flag set → flag wins over config.
+	if err := fs.Parse([]string{"--idle-shutdown", "2m"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := resolveServeIdleShutdown(10*time.Minute, fs, flagVal); got != 2*time.Minute {
+		t.Fatalf("flag override = %v, want 2m", got)
+	}
+	// Explicit 0 via flag still overrides config (disables idle shutdown).
+	if err := fs.Parse([]string{"--idle-shutdown", "0"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := resolveServeIdleShutdown(10*time.Minute, fs, flagVal); got != 0 {
+		t.Fatalf("flag 0 override = %v, want disabled", got)
 	}
 }

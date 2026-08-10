@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -74,6 +75,15 @@ type Server struct {
 	// rh is the lazily-built embedded routines service (scheduler + store),
 	// created on the first routines API call. Guarded by mu.
 	rh *routinesHub
+	// spawn identifies the parent for the /spawn-session endpoint: children are
+	// launched as detached `reasonix serve` processes on loopback ports above
+	// the parent's own port, each with its own controller and SSE stream.
+	// Zero base disables the endpoint (tests, embedded use).
+	spawn spawnConfig
+	// idle implements the tab-close grace period (serve.idle_shutdown_seconds /
+	// --idle-shutdown): the instance exits after the last SSE client
+	// disconnects with no turn running. Disabled (0) for tests and embedded use.
+	idle *idleShutdown
 }
 
 // New builds a Server. bc must be the controller's event sink.
@@ -84,9 +94,86 @@ func New(ctrl control.SessionAPI, bc *Broadcaster, serveCfg config.ServeConfig) 
 		bc:     bc,
 		titles: newTitleCache(ctrl.SessionDir()),
 		auth:   newAuthGate(serveCfg),
+		idle:   newIdleShutdown(0),
 	}
 	s.initTitleProvider()
 	return s
+}
+
+// SetSpawn enables the /spawn-session endpoint by giving the server the
+// parent's listen identity and the idle-shutdown value to forward to spawned
+// children. A blank or unparseable base address disables the endpoint (tests,
+// embedded use) and logs the reason.
+func (s *Server) SetSpawn(baseAddr string, idleShutdown time.Duration) {
+	host, port, err := parseSpawnBase(baseAddr)
+	if err != nil {
+		slog.Warn("serve: spawn-session disabled", "err", err)
+		return
+	}
+	s.spawn = spawnConfig{
+		base:         baseAddr,
+		host:         host,
+		basePort:     port,
+		idleShutdown: idleShutdown,
+		childStartAt: port + 1,
+	}
+	s.idle.enabled = idleShutdown
+	s.idle.onFire = s.onIdleShutdown
+}
+
+// spawnSession launches a new detached `reasonix serve` child on the next free
+// loopback port above the parent's own and returns its URL once the child's
+// /status is healthy. The child owns its lifecycle (idle shutdown); the parent
+// only records it. On failure the child is killed and a 503 is returned.
+func (s *Server) spawnSession(w http.ResponseWriter, r *http.Request) {
+	sc := s.spawn
+	if sc.base == "" {
+		http.Error(w, "spawn-session not enabled", http.StatusNotImplemented)
+		return
+	}
+	SweepSpawnChildren() // drop dead rows so the port scan starts from a clean registry
+	port, err := findFreePort(sc.host, sc.childStartAt, 100)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusServiceUnavailable)
+		return
+	}
+	url := "http://" + net.JoinHostPort(sc.host, strconv.Itoa(port))
+	// The child must outlive this request: exec.CommandContext kills the
+	// process when its context is done, and r.Context() cancels as soon as
+	// the handler returns. A detached background context keeps the child
+	// alive until its own idle shutdown.
+	cmd, err := spawnChild(context.Background(), childSpec{host: sc.host, port: port, idleShutdown: sc.idleShutdown})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusServiceUnavailable)
+		return
+	}
+	waitCtx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	defer cancel()
+	if err := waitHealthy(waitCtx, url, 15*time.Second, 250*time.Millisecond); err != nil {
+		_ = cmd.Process.Kill()
+		_ = RemoveSpawnChild(cmd.Process.Pid)
+		http.Error(w, err.Error(), http.StatusServiceUnavailable)
+		return
+	}
+	if err := RecordSpawnChild(cmd.Process.Pid, port); err != nil {
+		slog.Warn("serve: record spawned child", "pid", cmd.Process.Pid, "err", err)
+	}
+	writeJSON(w, map[string]any{"port": port, "url": url, "pid": cmd.Process.Pid})
+}
+
+// onIdleShutdown runs before an idle-triggered exit: the active session is
+// snapshotted so the transcript is saved, and a spawned child removes its own
+// registry row (the CLI's normal graceful-exit path does the same; the extra
+// remove here is idempotent).
+func (s *Server) onIdleShutdown() {
+	if err := s.ctl().SnapshotForShutdown(); err != nil {
+		slog.Warn("serve: idle shutdown snapshot", "err", err)
+	}
+	if os.Getenv("REASONIX_SPAWNED_CHILD") == "1" {
+		if err := RemoveSpawnChild(os.Getpid()); err != nil {
+			slog.Warn("serve: remove own spawn registry row", "err", err)
+		}
+	}
 }
 
 // ctl returns the current controller. Handlers must read it through here, never
@@ -412,6 +499,7 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("POST /plan", s.plan)
 	mux.HandleFunc("POST /compact", s.compact)
 	mux.HandleFunc("POST /new", s.newSession)
+	mux.HandleFunc("POST /spawn-session", s.spawnSession)
 	mux.HandleFunc("POST /rewind", s.rewind)
 	mux.HandleFunc("POST /fork", s.fork)
 	mux.HandleFunc("POST /summarize", s.summarize)
@@ -496,13 +584,11 @@ func (s *Server) RunGracefulListener(ctx context.Context, ln net.Listener) error
 	go func() {
 		errCh <- srv.Serve(ln)
 	}()
-	select {
-	case err := <-errCh:
-		if errors.Is(err, http.ErrServerClosed) {
-			return nil
-		}
-		return err
-	case <-ctx.Done():
+	// Idle shutdown: exit the instance after the last tab closes (no SSE
+	// clients, no running turn) once the configured grace period elapses.
+	s.idle.start(ctx, s.ctl().Running)
+	defer s.idle.Stop()
+	shutdown := func() error {
 		slog.Info("serve: shutting down gracefully")
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
@@ -514,6 +600,17 @@ func (s *Server) RunGracefulListener(ctx context.Context, ln net.Listener) error
 			return nil
 		}
 		return err
+	}
+	select {
+	case err := <-errCh:
+		if errors.Is(err, http.ErrServerClosed) {
+			return nil
+		}
+		return err
+	case <-ctx.Done():
+		return shutdown()
+	case <-s.idle.ShutdownCh():
+		return shutdown()
 	}
 }
 
@@ -568,6 +665,10 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 
 	ch, unsubscribe := s.bc.Subscribe()
 	defer unsubscribe()
+	// Track the client for the idle-shutdown grace period: the instance exits
+	// after the last client disconnects with no turn running.
+	s.idle.clientOpened()
+	defer s.idle.clientClosed()
 
 	fmt.Fprint(w, ": connected\n\n") // open the stream immediately
 	flusher.Flush()

@@ -260,6 +260,7 @@ stalled_warning_seconds = 900   # warn once per background job after this many q
 # token      = ""          # pre-shared token for auth_mode = "token" (auto-generated if empty)
 # password_hash = ""       # bcrypt hash for auth_mode = "password". Generate with: reasonix serve --hash-password <password>
 # behind_proxy = false      # set true when behind a trusted reverse proxy (nginx, Caddy, etc.) that sets X-Forwarded-* headers
+# idle_shutdown_seconds = 600  # auto-exit a serve instance this many seconds after its last browser tab closes (0 = never; omitted = 10 minutes)
 
 [routines]
 # Scheduled jobs (cron/interval) and HMAC-protected webhook triggers

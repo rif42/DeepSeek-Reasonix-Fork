@@ -758,6 +758,18 @@ func runAgent(args []string, version string) int {
 	return completion.exitCode
 }
 
+// resolveServeIdleShutdown returns the effective serve idle-shutdown grace
+// period: the --idle-shutdown CLI flag when it was explicitly set, otherwise
+// the config-resolved value. Extracted for unit testing.
+func resolveServeIdleShutdown(cfgVal time.Duration, fs *flag.FlagSet, flagVal *time.Duration) time.Duration {
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "idle-shutdown" {
+			cfgVal = *flagVal
+		}
+	})
+	return cfgVal
+}
+
 // runServe exposes the controller over HTTP+SSE: events stream to the browser,
 // commands arrive as JSON POSTs. The Broadcaster is the controller's event sink,
 // so the same typed stream the chat TUI consumes reaches web clients — the
@@ -777,6 +789,7 @@ func runServe(args []string) int {
 	portFile := fs.String("port-file", "", "write the actual bound listen address (host:port) to this file after binding")
 	tokenFile := fs.String("token-file", "", "read the auth=token pre-shared token from this file (overrides --token; keeps the secret out of argv)")
 	pidFile := fs.String("pid-file", "", "write the server process id to this file")
+	idleShutdown := fs.Duration("idle-shutdown", 0, "auto-exit the server this long after its last browser tab closes (e.g. 10m; 0 = use config serve.idle_shutdown_seconds, whose 0 = never)")
 	if code, ok := parseCommandFlags(fs, args); !ok {
 		return code
 	}
@@ -894,6 +907,16 @@ func runServe(args []string) int {
 	}
 
 	srv := serve.New(ctrl, bc, serveCfg)
+	// Enable /spawn-session: children are detached `reasonix serve` processes on
+	// loopback ports above this parent's. Resolve the idle-shutdown grace period
+	// (CLI flag wins over [serve] config; config default is 10 minutes) and
+	// forward it to every spawned child so they inherit the same auto-exit rule.
+	idleShutdownVal := resolveServeIdleShutdown(serveCfg.IdleShutdown(), fs, idleShutdown)
+	srv.SetSpawn(*addr, idleShutdownVal) // Reap registry rows for children that died without a graceful exit (hard
+	// kill, machine reboot) so the port scan starts from a clean slate.
+	if n := serve.SweepSpawnChildren(); n > 0 {
+		slog.Info("serve: reaped stale spawned instances", "count", n)
+	}
 	srv.SetSessionLeases(leases)
 
 	// With --port-file the supervisor needs the real bound port (--addr may be
@@ -958,17 +981,28 @@ func runServe(args []string) int {
 	// Use graceful shutdown so SIGINT/SIGTERM drain active connections.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	// A spawned child removes its own registry row on graceful exit; the parent
+	// only ever reaps rows whose pid is already dead.
+	removeOwnSpawnRow := func() {
+		if os.Getenv("REASONIX_SPAWNED_CHILD") == "1" {
+			if err := serve.RemoveSpawnChild(os.Getpid()); err != nil {
+				slog.Warn("serve: remove own spawn registry row", "err", err)
+			}
+		}
+	}
 	if ln != nil {
 		if err := srv.RunGracefulListener(ctx, ln); err != nil {
 			fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
 			return 1
 		}
+		removeOwnSpawnRow()
 		return 0
 	}
 	if err := srv.RunGraceful(ctx, *addr); err != nil {
 		fmt.Fprintln(os.Stderr, i18n.M.ErrorPrefix, err)
 		return 1
 	}
+	removeOwnSpawnRow()
 	return 0
 }
 

@@ -16,6 +16,7 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
+	"time"
 
 	fileencoding "reasonix/internal/fileutil/encoding"
 	"reasonix/internal/netclient"
@@ -924,6 +925,27 @@ type ServeConfig struct {
 	// rate-limiting and Secure-cookie decisions. When false (default), they
 	// are ignored — an attacker can otherwise forge them.
 	BehindProxy bool `toml:"behind_proxy"`
+	// IdleShutdownSeconds auto-exits the serve instance this many seconds
+	// after its last browser tab disconnects (no open SSE clients and no turn
+	// running). Omitted/negative keeps the 10-minute default; explicit 0
+	// disables auto-exit entirely. Spawned instances (the web UI's "New
+	// Instance" button) forward this value to their children.
+	IdleShutdownSeconds *int `toml:"idle_shutdown_seconds"`
+}
+
+// DefaultServeIdleShutdown is the grace period applied when
+// serve.idle_shutdown_seconds is omitted: an instance exits 10 minutes after
+// its last tab closes, so a quick re-open hits a warm instance while abandoned
+// instances clean themselves up.
+const DefaultServeIdleShutdown = 10 * time.Minute
+
+// IdleShutdown resolves the serve idle-shutdown grace period: 0 disables
+// auto-exit, an omitted/negative value falls back to DefaultServeIdleShutdown.
+func (c ServeConfig) IdleShutdown() time.Duration {
+	if c.IdleShutdownSeconds == nil || *c.IdleShutdownSeconds < 0 {
+		return DefaultServeIdleShutdown
+	}
+	return time.Duration(*c.IdleShutdownSeconds) * time.Second
 }
 
 // RoutinesConfig controls the routines service: scheduled jobs (cron/interval)
