@@ -675,6 +675,58 @@ func TestSessionsSkipsCleanupPending(t *testing.T) {
 	}
 }
 
+func TestSessionsListShowsCustomTitle(t *testing.T) {
+	dir := t.TempDir()
+	// Renamed session: the custom title lives in the branch-meta sidecar
+	// (what the TUI's /rename writes), and must outrank the generated title.
+	renamed := filepath.Join(dir, "renamed.jsonl")
+	s := agent.NewSession("system")
+	s.Add(provider.Message{Role: provider.RoleUser, Content: "explain this module"})
+	if err := s.Save(renamed); err != nil {
+		t.Fatal(err)
+	}
+	if err := agent.SaveBranchMeta(renamed, agent.BranchMeta{CustomTitle: "My Custom Rename"}); err != nil {
+		t.Fatal(err)
+	}
+	// Plain session: no custom title, so the preview fallback is used.
+	plain := filepath.Join(dir, "plain.jsonl")
+	s = agent.NewSession("system")
+	s.Add(provider.Message{Role: provider.RoleUser, Content: "another session"})
+	if err := s.Save(plain); err != nil {
+		t.Fatal(err)
+	}
+
+	bc := NewBroadcaster()
+	ctrl := control.New(control.Options{Sink: bc, SessionDir: dir, SessionPath: renamed})
+	server := New(ctrl, bc, config.ServeConfig{})
+	server.titleProv = nil // never reach the network in tests: titles fall back to previews
+	srv := httptest.NewServer(server.Handler())
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/sessions")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var got []struct {
+		Name  string `json:"name"`
+		Title string `json:"title"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	titles := map[string]string{}
+	for _, e := range got {
+		titles[e.Name] = e.Title
+	}
+	if titles["renamed"] != "My Custom Rename" {
+		t.Fatalf("renamed session title = %q, want the custom rename", titles["renamed"])
+	}
+	if titles["plain"] != "another session" {
+		t.Fatalf("plain session title = %q, want preview fallback", titles["plain"])
+	}
+}
+
 func TestDeleteSessionRequiresSessionNameInsideSessionDir(t *testing.T) {
 	dir := t.TempDir()
 	active := filepath.Join(dir, "active.jsonl")

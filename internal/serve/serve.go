@@ -1295,7 +1295,9 @@ func (s *Server) generateTitle(ctx context.Context, firstMsg string) string {
 }
 
 // sessions lists saved session files from the session directory, enriched with
-// LLM-generated titles and turn counts.
+// LLM-generated titles and turn counts. Explicit renames (the branch-meta
+// sidecar's custom_title, e.g. from the TUI's /rename) outrank generated
+// titles, mirroring the resume picker.
 func (s *Server) sessions(w http.ResponseWriter, r *http.Request) {
 	dir := s.ctl().SessionDir()
 	if dir == "" {
@@ -1331,6 +1333,12 @@ func (s *Server) sessions(w http.ResponseWriter, r *http.Request) {
 		if first, turns := agent.SessionPreview(path); turns > 0 {
 			entry.Turns = turns
 			entry.Title = s.sessionTitle(r.Context(), e.Name(), first, agent.SessionContentModTime(path).UnixNano())
+			// Explicit renames (TUI /rename) live in the branch-meta sidecar and
+			// must win over any generated title, exactly as the resume picker
+			// prefers CustomTitle over topic/generated titles.
+			if meta, ok, _ := agent.LoadBranchMeta(path); ok && strings.TrimSpace(meta.CustomTitle) != "" {
+				entry.Title = meta.CustomTitle
+			}
 		}
 		out = append(out, entry)
 	}
