@@ -9,8 +9,9 @@ Reasonix. Each section covers **what** the feature does, **how** it works,
 | 1 | [Routines — scheduled jobs & webhook automations](#1-routines--scheduled-jobs--webhook-automations) | `e575a063` |
 | 2 | [Memory self-improvement loop](#2-memory-self-improvement-loop) | `2594cc0e` → `dd64528c` |
 | 3 | [Markdown chat rendering in the serve web UI](#3-markdown-chat-rendering-in-the-serve-web-ui) | `a141b6d9` |
+| 4 | [Scrollable session list in the serve web UI sidebar](#4-scrollable-session-list-in-the-serve-web-ui-sidebar) | `c209661a` (bundled) |
 
-All three were ported/inspired by the
+Features 1–3 were ported/inspired by the
 [Hermes agent](https://github.com/NousResearch/hermes-agent) and are documented
 per-topic under [`docs/`](docs/): `docs/ROUTINES.md` and
 `docs/SESSION_MEMORY_RETRIEVAL.md` hold the deeper detail.
@@ -305,6 +306,42 @@ Markdown instead of raw text.
 
 ---
 
+## 4. Scrollable session list in the serve web UI sidebar
+
+The `reasonix serve` sidebar session list scrolls independently instead of
+squashing its items to fit.
+
+### What it does
+
+- With many sessions, the list pane (`#session-list`) scrolls on its own while
+  the brand header and the status footer stay pinned.
+- Every session item keeps its full height (~47px: title + meta + padding)
+  instead of being compressed into a sliver so the whole list can fit.
+
+### How it works
+
+- The sidebar is a fixed-height flex column: `.app` is a `100vh` grid and
+  `.sidebar` has `overflow:hidden`, so the sidebar can never grow past the
+  viewport.
+- `.session-list` and `.sidebar__nav` are `flex:1` scroll children. They need
+  `min-height:0` so the flex container is allowed to shrink them below their
+  content height — without it the list grew to its content size and the
+  sidebar's `overflow:hidden` clipped it instead of scrolling.
+- `.session-item` additionally needs `flex-shrink:0`: its `overflow:hidden`
+  (used for title ellipsis) disables the flexbox automatic minimum size, which
+  let the items compress to ~16px so the list never overflowed. With
+  `flex-shrink:0` items keep their natural height and the list overflows →
+  scrolls.
+
+### Scope
+
+- CSS-only change in `internal/serve/index.html` (the embedded SPA); no Go
+  logic or state involved.
+- Affects the serve web UI sidebar only; the CLI TUI resume picker renders its
+  own session list.
+
+---
+
 ## Commits
 
 | Feature | Commits |
@@ -312,3 +349,4 @@ Markdown instead of raw text.
 | Routines | `e575a063` (scheduled jobs, webhook automations, serve tab + currency job) |
 | Memory loop | `2594cc0e` (nudge + config) → `600fb25a` (background reviewer) → `51a6d880` (CLI + boot wiring + docs) → `dd64528c` (merge) |
 | Markdown rendering | `a141b6d9` (render chat messages as markdown via vendored markdown-it) |
+| Scrollable session list | bundled in `c209661a` (multi-instance tabs; no dedicated commit) |
