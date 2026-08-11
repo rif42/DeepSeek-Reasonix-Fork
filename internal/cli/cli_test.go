@@ -336,6 +336,32 @@ func TestRunDefaultsToInteractiveSession(t *testing.T) {
 	}
 }
 
+func TestRunDispatchesProfileFlagToInteractiveSession(t *testing.T) {
+	isolateCLIConfigHome(t)
+
+	prev := runInteractiveSession
+	prevInteractive := cliIsInteractive
+	t.Cleanup(func() {
+		runInteractiveSession = prev
+		cliIsInteractive = prevInteractive
+	})
+	cliIsInteractive = func() bool { return true }
+
+	var gotArgs []string
+	runInteractiveSession = func(args []string, _ string) int {
+		gotArgs = append([]string(nil), args...)
+		return 17
+	}
+
+	if rc := Run([]string{"--profile", "delivery"}, "test-version"); rc != 17 {
+		t.Fatalf("Run --profile delivery rc = %d, want 17 (interactive session dispatch)", rc)
+	}
+	want := []string{"--profile", "delivery"}
+	if !reflect.DeepEqual(gotArgs, want) {
+		t.Fatalf("interactive args = %#v, want %#v", gotArgs, want)
+	}
+}
+
 func TestRunNoArgsNonInteractivePrintsUsage(t *testing.T) {
 	isolateCLIConfigHome(t)
 
@@ -826,7 +852,7 @@ func TestConfigCompactRatioQueryReportsBuiltInDefault(t *testing.T) {
 			t.Fatalf("config compact-ratio query rc = %d, want 0", rc)
 		}
 	})
-	if out != "compact_ratio = 80% (built-in default)\n" {
+	if out != "compact_ratio = 85% (built-in default)\n" {
 		t.Fatalf("config compact-ratio query output = %q", out)
 	}
 }

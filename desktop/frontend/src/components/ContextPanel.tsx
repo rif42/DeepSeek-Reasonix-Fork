@@ -28,7 +28,6 @@ interface ContextPanelProps {
   usageSeq?: number;
 }
 
-
 function fmtDuration(ms: number, t: Translator): string {
   if (ms <= 0) return "-";
   const totalSeconds = Math.max(1, Math.round(ms / 1000));
@@ -37,7 +36,6 @@ function fmtDuration(ms: number, t: Translator): string {
   if (minutes <= 0) return t("context.durationSeconds", { seconds });
   return t("context.durationMinutesSeconds", { minutes, seconds });
 }
-
 
 interface MetricTokenDisplay {
   display: string;
@@ -100,7 +98,7 @@ export function cacheHitTone(hitTokens: number, missTokens: number): MetricTone 
   return "warn";
 }
 
-function formatSharePercent(value: number, total: number): string {
+export function formatSharePercent(value: number, total: number): string {
   if (total <= 0 || value <= 0) return "-";
   const pct = (value / total) * 100;
   if (pct > 0 && pct < 1) return "<1%";
@@ -172,6 +170,34 @@ interface ContextBreakdown {
 
 function nonNegativeTokenCount(value: number): number {
   return Number.isFinite(value) ? Math.max(0, value) : 0;
+}
+
+/** Prefer Context* (latest attempt) over billable aggregates for turn panels. */
+export function liveTurnUsageBreakdown(
+  usage?: WireUsage | null,
+  info?: Pick<ContextPanelInfo, "promptTokens" | "completionTokens" | "reasoningTokens"> | null,
+): { promptTokens: number; completionTokens: number; reasoningTokens: number } {
+  if (usage) {
+    const hasContext =
+      (usage.contextPromptTokens ?? 0) > 0 || (usage.contextCompletionTokens ?? 0) > 0;
+    if (hasContext) {
+      return {
+        promptTokens: usage.contextPromptTokens ?? 0,
+        completionTokens: usage.contextCompletionTokens ?? 0,
+        reasoningTokens: usage.contextReasoningTokens ?? 0,
+      };
+    }
+    return {
+      promptTokens: usage.promptTokens ?? 0,
+      completionTokens: usage.completionTokens ?? 0,
+      reasoningTokens: usage.reasoningTokens ?? 0,
+    };
+  }
+  return {
+    promptTokens: info?.promptTokens ?? 0,
+    completionTokens: info?.completionTokens ?? 0,
+    reasoningTokens: info?.reasoningTokens ?? 0,
+  };
 }
 
 export function contextBreakdown(
@@ -363,9 +389,12 @@ export function ContextPanel({
   const usedTokens = context?.used && context.used > 0 ? context.used : info?.usedTokens ?? 0;
   const windowTokens = context?.window && context.window > 0 ? context.window : info?.windowTokens ?? 0;
   // Prefer live usage props (updated in real-time by the reducer during streaming)
-  // over the async-fetched info snapshot (only refreshed on turn_done).
-  const promptTokens = usage?.promptTokens ?? info?.promptTokens ?? 0;
-  const completionTokens = usage?.completionTokens ?? info?.completionTokens ?? 0;
+  // over the async-fetched info snapshot (only refreshed on turn_done). Multi-
+  // attempt stream recovery reports billable aggregates on prompt/completion
+  // and latest-attempt shape on Context* — use the latter for turn breakdown.
+  const turnBreakdown = liveTurnUsageBreakdown(usage, info);
+  const promptTokens = turnBreakdown.promptTokens;
+  const completionTokens = turnBreakdown.completionTokens;
   const totalTokens = info?.totalTokens && info.totalTokens > 0
     ? info.totalTokens
     : sessionTokens && sessionTokens > 0
@@ -373,7 +402,7 @@ export function ContextPanel({
       : usage?.totalTokens && usage.totalTokens > 0
         ? usage.totalTokens
         : promptTokens + completionTokens;
-  const reasoningTokens = usage?.reasoningTokens ?? info?.reasoningTokens ?? 0;
+  const reasoningTokens = turnBreakdown.reasoningTokens;
   // Session-cumulative cache tokens for the top summary: all-sources telemetry
   // first (matching the session cost and per-source rows in this panel — the
   // wire session counters are executor-only), with the live counters bridging
@@ -391,10 +420,20 @@ export function ContextPanel({
   const changedFiles = asArray(info?.changedFiles);
 
   const usagePct = windowTokens > 0 ? Math.min(100, Math.round((usedTokens / windowTokens) * 100)) : 0;
-  const compactRatio = context?.compactRatio && context.compactRatio > 0 ? context.compactRatio : 0.8;
+  const compactRatio = context?.compactRatio && context.compactRatio > 0 ? context.compactRatio : 0.85;
   const compactPct = Math.round(compactRatio * 100);
-  const compactTokens = windowTokens > 0 ? Math.round(windowTokens * compactRatio) : 0;
+  const maintenance = context?.maintenance;
+  const triggerTokens = maintenance?.triggerTokens && maintenance.triggerTokens > 0
+    ? maintenance.triggerTokens
+    : windowTokens > 0
+      ? Math.round(windowTokens * compactRatio)
+      : 0;
+  const compactTokens = triggerTokens > 0 ? triggerTokens : (windowTokens > 0 ? Math.round(windowTokens * compactRatio) : 0);
   const tokensUntilCompact = compactTokens > usedTokens ? compactTokens - usedTokens : 0;
+  const canonicalTokens = maintenance?.canonicalTokens ?? 0;
+  const projectedTokens = maintenance?.projectedTokens ?? usedTokens;
+  const checkpointState = maintenance?.checkpointState || (maintenance?.projectionVersion ? "restored" : "none");
+  const lastReceipt = maintenance?.lastReceipt;
   const breakdown = contextBreakdown(usedTokens, windowTokens, promptTokens, completionTokens, reasoningTokens);
   const eventTimes = [
     ...readFiles.map((file) => file.time),
@@ -517,6 +556,53 @@ export function ContextPanel({
                 </span>
               </div>
             </div>
+            {(canonicalTokens > 0 || projectedTokens > 0 || (maintenance?.projectionVersion ?? 0) > 0) && (
+              <div className="context-panel__maintenance" aria-label={t("context.maintenanceTitle")}>
+                <SectionHeading title={t("context.maintenanceTitle")} />
+                <div className="context-panel__maintenance-rows">
+                  <MiniStat
+                    label={t("context.maintenanceCanonical")}
+                    value={formatTokens(canonicalTokens)}
+                  />
+                  <MiniStat
+                    label={t("context.maintenanceVisible")}
+                    value={formatTokens(projectedTokens)}
+                  />
+                  <MiniStat
+                    label={t("context.maintenanceTrigger")}
+                    value={triggerTokens > 0 ? formatTokens(triggerTokens) : "-"}
+                    title={t("context.maintenanceTriggerHint", { percent: compactPct })}
+                  />
+                  <MiniStat
+                    label={t("context.maintenanceRatio")}
+                    value={`${compactPct}%`}
+                  />
+                  <MiniStat
+                    label={t("context.maintenanceCheckpoint")}
+                    value={
+                      checkpointState === "applied"
+                        ? t("context.maintenanceCheckpointApplied")
+                        : checkpointState === "restored"
+                          ? t("context.maintenanceCheckpointRestored")
+                          : t("context.maintenanceCheckpointNone")
+                    }
+                    wide
+                  />
+                  {(maintenance?.projectionVersion ?? 0) > 0 && (
+                    <MiniStat
+                      label={t("context.maintenanceVersion")}
+                      value={String(maintenance?.projectionVersion)}
+                    />
+                  )}
+                  {typeof lastReceipt?.savedTokens === "number" && lastReceipt.savedTokens > 0 && (
+                    <MiniStat
+                      label={t("context.maintenanceSaved")}
+                      value={formatTokens(lastReceipt.savedTokens)}
+                    />
+                  )}
+                </div>
+              </div>
+            )}
           </section>
           <section className="context-panel__section context-panel__session-section">
             <SectionHeading title={t("context.sessionMetrics")} />
@@ -582,11 +668,10 @@ export function ContextPanel({
                   </div>
                   <div className="context-panel__source-legend">
                     {sourceUsageRows.map((row) => {
-                      const sharePct = sourceTotalTokens > 0 ? (sourceTokenTotal(row) / sourceTotalTokens) * 100 : 0;
                       return (
                         <span key={row.source}>
                           <i className={`context-panel__source-dot context-panel__source-tone--${sourceTone(row.source)}`} aria-hidden="true" />
-                          {sourceLabel(row.label, t)} {sharePct > 0 ? `${sharePct.toFixed(0)}%` : "-"}
+                          {sourceLabel(row.label, t)} {formatSharePercent(sourceTokenTotal(row), sourceTotalTokens)}
                         </span>
                       );
                     })}

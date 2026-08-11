@@ -660,7 +660,7 @@ func newRoutinesID() string {
 func newRoutinesSecret() string {
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
-		return base64.RawURLEncoding.EncodeToString([]byte(fmt.Sprintf("fallback-%d", time.Now().UnixNano())))
+		return base64.RawURLEncoding.EncodeToString(fmt.Appendf(nil, "fallback-%d", time.Now().UnixNano()))
 	}
 	return base64.RawURLEncoding.EncodeToString(b)
 }

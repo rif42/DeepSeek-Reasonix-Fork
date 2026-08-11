@@ -1,7 +1,6 @@
 package serve
 
 import (
-	"context"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -23,8 +22,7 @@ func TestIdleShutdownFiresAfterGrace(t *testing.T) {
 	var fired atomic.Bool
 	id := newIdleShutdown(120 * time.Millisecond)
 	id.fireHook = func() { fired.Store(true) }
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	id.start(ctx, func() bool { return false })
 	defer id.Stop()
 	waitFired(t, &fired, "no clients, no turn")
@@ -34,8 +32,7 @@ func TestIdleShutdownDisarmedByClient(t *testing.T) {
 	var fired atomic.Bool
 	id := newIdleShutdown(100 * time.Millisecond)
 	id.fireHook = func() { fired.Store(true) }
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	id.start(ctx, func() bool { return false })
 	defer id.Stop()
 
@@ -54,8 +51,7 @@ func TestIdleShutdownDeferredWhileRunning(t *testing.T) {
 	id.fireHook = func() { fired.Store(true) }
 	running := atomic.Bool{}
 	running.Store(true)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	id.start(ctx, func() bool { return running.Load() })
 	defer id.Stop()
 

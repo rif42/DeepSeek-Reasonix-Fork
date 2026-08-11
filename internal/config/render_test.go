@@ -217,7 +217,7 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 	orig.Agent.RecoveryModel = "mimo-pro"
 	orig.Agent.RecoveryTemperature = 0.15
 	orig.Agent.ReasoningLanguage = "zh"
-	orig.Agent.ToolResultSnipRatio = 0.65
+	orig.Agent.CompactRatio = 0.8
 	orig.Agent.SubagentModel = "mimo-pro"
 	orig.Agent.SubagentModels = map[string]string{"review": "deepseek-pro"}
 	orig.Agent.MaxSubagentDepth = 3
@@ -249,6 +249,7 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 	orig.Skills.Paths = []string{"~/my-skills", "../shared/skills"}
 	orig.Skills.ExcludedPaths = []string{"~/.agents/skills"}
 	orig.Skills.DisabledSkills = []string{"review", "explore"}
+	orig.Skills.DisableImplicitInvocation = true
 	orig.Skills.MaxDepth = 2
 	orig.Bot.ToolApprovalMode = "auto"
 	orig.Bot.Control = BotControlConfig{Enabled: true, Addr: "127.0.0.1:39001", TokenEnv: "BOT_CONTROL_TOKEN"}
@@ -342,6 +343,9 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 	if got.UICursorShape() != "bar" {
 		t.Errorf("ui.cursor_shape = %q, want bar", got.UICursorShape())
 	}
+	if !got.UI.ShowTurnUsage {
+		t.Error("ui.show_turn_usage = false, want true")
+	}
 	if got.Desktop.Language != "en" {
 		t.Errorf("desktop.language = %q, want en", got.Desktop.Language)
 	}
@@ -417,17 +421,13 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 	if got.Agent.ReasoningLanguage != "zh" {
 		t.Errorf("reasoning_language = %q, want zh", got.Agent.ReasoningLanguage)
 	}
-	if got.Agent.SoftCompactRatio != orig.Agent.SoftCompactRatio {
-		t.Errorf("soft_compact_ratio = %v, want %v", got.Agent.SoftCompactRatio, orig.Agent.SoftCompactRatio)
-	}
-	if got.Agent.ToolResultSnipRatio != orig.Agent.ToolResultSnipRatio {
-		t.Errorf("tool_result_snip_ratio = %v, want %v", got.Agent.ToolResultSnipRatio, orig.Agent.ToolResultSnipRatio)
-	}
 	if got.Agent.CompactRatio != orig.Agent.CompactRatio {
 		t.Errorf("compact_ratio = %v, want %v", got.Agent.CompactRatio, orig.Agent.CompactRatio)
 	}
-	if got.Agent.CompactForceRatio != orig.Agent.CompactForceRatio {
-		t.Errorf("compact_force_ratio = %v, want %v", got.Agent.CompactForceRatio, orig.Agent.CompactForceRatio)
+	// Deprecated multi-threshold fields must not reappear after render/load.
+	if got.Agent.SoftCompactRatio != 0 || got.Agent.ToolResultSnipRatio != 0 || got.Agent.CompactForceRatio != 0 {
+		t.Errorf("deprecated compact ratios survived round-trip: soft=%v snip=%v force=%v",
+			got.Agent.SoftCompactRatio, got.Agent.ToolResultSnipRatio, got.Agent.CompactForceRatio)
 	}
 	if strings.Join(got.Agent.Keep, ",") != strings.Join(orig.Agent.Keep, ",") {
 		t.Errorf("keep = %v, want %v", got.Agent.Keep, orig.Agent.Keep)
@@ -513,6 +513,9 @@ func TestRenderTOMLRoundTrips(t *testing.T) {
 	}
 	if len(got.Skills.DisabledSkills) != 2 || got.Skills.DisabledSkills[0] != "review" || got.Skills.DisabledSkills[1] != "explore" {
 		t.Errorf("skills.disabled_skills = %v", got.Skills.DisabledSkills)
+	}
+	if !got.Skills.DisableImplicitInvocation || got.ImplicitSkillInvocationEnabled() {
+		t.Error("skills.disable_implicit_invocation was not preserved")
 	}
 	if got.SkillMaxDepth() != 2 {
 		t.Errorf("skills.max_depth = %d, want 2", got.SkillMaxDepth())
@@ -733,7 +736,7 @@ extensions = [".cc", ".cpp", ".hpp"]
 func BenchmarkRenderTOMLWithLSPServers(b *testing.B) {
 	cfg := Default()
 	cfg.LSP.Servers = make(map[string]LSPServer, 64)
-	for i := 0; i < 64; i++ {
+	for i := range 64 {
 		lang := "lang" + strconv.Itoa(i)
 		cfg.LSP.Servers[lang] = LSPServer{
 			Command:     "server-" + strconv.Itoa(i),
@@ -746,7 +749,7 @@ func BenchmarkRenderTOMLWithLSPServers(b *testing.B) {
 	}
 
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		rendered := RenderTOML(cfg)
 		if len(rendered) == 0 {
 			b.Fatal("empty render")
@@ -945,6 +948,29 @@ func TestProjectDeltaRendersUICursorShape(t *testing.T) {
 	}
 	if got.UICursorShape() != "block" {
 		t.Fatalf("ui.cursor_shape = %q, want block", got.UICursorShape())
+	}
+}
+
+func TestShowTurnUsageDefaultsOnAndRendersFalseOverride(t *testing.T) {
+	c := Default()
+	if !c.UI.ShowTurnUsage {
+		t.Fatal("ui.show_turn_usage should default to true")
+	}
+
+	c.UI.ShowTurnUsage = false
+	delta := RenderTOMLProjectDelta(c)
+	for _, want := range []string{"[ui]", "show_turn_usage = false"} {
+		if !strings.Contains(delta, want) {
+			t.Fatalf("project delta missing %q:\n%s", want, delta)
+		}
+	}
+
+	got := Default()
+	if _, err := toml.Decode(delta, got); err != nil {
+		t.Fatalf("decode project delta: %v\n%s", err, delta)
+	}
+	if got.UI.ShowTurnUsage {
+		t.Fatal("ui.show_turn_usage false override did not round-trip")
 	}
 }
 
@@ -1278,7 +1304,7 @@ func TestRenderTOMLWindowsSandboxDefaultAndExplicitEnforceDisabled(t *testing.T)
 func extractSectionLines(toml, section string) []string {
 	var lines []string
 	inSection := false
-	for _, line := range strings.Split(toml, "\n") {
+	for line := range strings.SplitSeq(toml, "\n") {
 		trimmed := strings.TrimSpace(line)
 		if strings.HasPrefix(trimmed, section) {
 			inSection = true

@@ -354,7 +354,7 @@ func TestParallelCap(t *testing.T) {
 	runner := &fakeRunner{response: "done", block: block, started: started}
 	s, store, _ := newScheduler(t, runner, "")
 	defer s.Stop()
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		if err := store.PutJob(dueJob("job-" + string(rune('a'+i)))); err != nil {
 			t.Fatal(err)
 		}

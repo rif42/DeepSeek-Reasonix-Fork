@@ -77,13 +77,6 @@ type Reviewer struct {
 // DefaultMaxTranscriptChars bounds the review input by default.
 const DefaultMaxTranscriptChars = 40000
 
-func (rv *Reviewer) stderr() io.Writer {
-	if rv.Stderr == nil {
-		return io.Discard
-	}
-	return rv.Stderr
-}
-
 func (rv *Reviewer) maxChars() int {
 	if rv.MaxTranscriptChars <= 0 {
 		return DefaultMaxTranscriptChars

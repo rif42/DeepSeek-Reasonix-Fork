@@ -36,10 +36,10 @@ const (
 //	"platform:chat:thread"     -> explicit chat + thread
 func ParseDeliveryTarget(s string) (DeliveryTarget, error) {
 	s = strings.TrimSpace(s)
-	switch {
-	case s == "" || s == DeliverLocal:
+	switch s {
+	case "", DeliverLocal:
 		return DeliveryTarget{Kind: DeliverLocal}, nil
-	case s == DeliverOrigin:
+	case DeliverOrigin:
 		return DeliveryTarget{Kind: DeliverOrigin}, nil
 	default:
 		parts := strings.Split(s, ":")

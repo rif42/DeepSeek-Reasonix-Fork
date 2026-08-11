@@ -194,20 +194,20 @@ func parseCronField(expr string, min, max int) (*cronField, error) {
 		}
 		return nil
 	}
-	for _, part := range strings.Split(expr, ",") {
+	for part := range strings.SplitSeq(expr, ",") {
 		part = strings.TrimSpace(part)
 		if part == "" {
 			return nil, fmt.Errorf("empty list element in %q", expr)
 		}
 		step := 1
 		base := part
-		if slash := strings.IndexByte(part, '/'); slash >= 0 {
+		if field, rest, ok := strings.Cut(part, "/"); ok {
 			var err error
-			step, err = strconv.Atoi(part[slash+1:])
+			step, err = strconv.Atoi(rest)
 			if err != nil || step <= 0 {
 				return nil, fmt.Errorf("invalid step in %q", part)
 			}
-			base = part[:slash]
+			base = field
 		}
 		switch {
 		case base == "*":
@@ -256,7 +256,7 @@ func (c *cron) next(after time.Time) *time.Time {
 		}
 		// Candidate first minute of the day; iterate minutes 0..1439.
 		dayStart := time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)
-		for m := 0; m < 1440; m++ {
+		for m := range 1440 {
 			cand := dayStart.Add(time.Duration(m) * time.Minute)
 			if !cand.After(after) {
 				continue

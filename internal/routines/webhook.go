@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -288,7 +289,7 @@ func RenderPrompt(template string, payload map[string]any, eventType string) str
 			b.WriteString(rawStr)
 		default:
 			if v, ok := lookupPath(payload, token); ok {
-				b.WriteString(fmt.Sprint(v))
+				fmt.Fprint(&b, v)
 			}
 		}
 	}
@@ -313,12 +314,7 @@ func lookupPath(payload map[string]any, path string) (any, bool) {
 }
 
 func containsString(list []string, s string) bool {
-	for _, v := range list {
-		if v == s {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(list, s)
 }
 
 func (h *WebhookHandler) logf(format string, args ...any) {

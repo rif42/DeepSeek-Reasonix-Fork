@@ -46,7 +46,7 @@ func parseSpawnBase(addr string) (host string, port int, err error) {
 // findFreePort returns the first free TCP port at or above from on host, or an
 // error once attempts consecutive ports have all been taken.
 func findFreePort(host string, from, attempts int) (int, error) {
-	for i := 0; i < attempts; i++ {
+	for i := range attempts {
 		port := from + i
 		ln, err := net.Listen("tcp", net.JoinHostPort(host, strconv.Itoa(port)))
 		if err != nil {

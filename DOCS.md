@@ -350,3 +350,4 @@ squashing its items to fit.
 | Memory loop | `2594cc0e` (nudge + config) → `600fb25a` (background reviewer) → `51a6d880` (CLI + boot wiring + docs) → `dd64528c` (merge) |
 | Markdown rendering | `a141b6d9` (render chat messages as markdown via vendored markdown-it) |
 | Scrollable session list | bundled in `c209661a` (multi-instance tabs; no dedicated commit) |
+| Upstream merge → v1.23.0 | `Merge upstream v1.23.0 into merge-v1.23.0-wip` (2026-08-11) — upstream base moved v1.19.7 → v1.23.0; all fork features re-verified on the new base; `tools/repolint/baseline.json` re-baselined to carry the merge delta (1969 findings) |

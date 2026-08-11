@@ -5,6 +5,8 @@
 /npm/.stage/
 /reasonix
 /reasonix.exe
+/e2ebench
+/e2ebench.exe
 
 # Routine job outputs (regenerated on schedule by reasonix routines)
 /conversion.md
@@ -75,9 +77,10 @@ temp/
 # Official theme art intermediate outputs / caches
 scripts/official-theme-art/out/
 scripts/official-theme-art/__pycache__/
-agent-complexity-report.txt
 site/.generated/
 
 # Nested sibling repos moved into the fork root (each keeps its own .git)
 /crawl4ai/
 /life/
+# Committed pointer at REASONIX.md; overrides a global CLAUDE.md ignore rule.
+!/CLAUDE.md

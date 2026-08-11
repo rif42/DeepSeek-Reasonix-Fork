@@ -214,7 +214,7 @@ func TestWebhookRateLimit(t *testing.T) {
 		t.Fatal(err)
 	}
 	var accepted atomic.Int32
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		rec := postWebhook(t, h, "/webhooks/pr", `{"action":"opened"}`, "", "d-"+string(rune('a'+i)))
 		if rec.Code == http.StatusAccepted {
 			accepted.Add(1)
