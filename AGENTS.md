@@ -121,6 +121,12 @@ Ask (or confirm from an existing job) before creating:
 
 ## Conventions
 
+- This repo is a **fork of upstream Reasonix**. Every feature or
+  user-visible change we add must be documented in `DOCS.md` (intro-table row
+  + a what/how/use/state section + a `## Commits` row, honest about the
+  commit it rides in). Keeping the fork's deltas recorded in one place lets
+  you compare against upstream when pulling the latest Reasonix changes and
+  spot incompatibilities or merge errors quickly.
 - New routines code goes in `internal/routines/` (stdlib-only leaves: store,
   filelock, fileutil — no new deps; schedule parser is hand-rolled).
 - The scheduler fires at-most-once: `next_run_at` advances **before**
